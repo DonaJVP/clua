@@ -12,7 +12,8 @@ Essential:
 `lua_Table*`
 `FunctionPointer`
 LuaType:
-`enum LuaType: uint64_t {
+```cpp
+enum LuaType: uint64_t {
 	LuaInteger	=	0x8,
 	LuaNumber	=	0x9,
 	LuaString	=	0x4,
@@ -23,14 +24,17 @@ LuaType:
 	LuaBoolean 	=	0x3,
 	LuaUnknown	=	0x2,
 	LuaERR		=	0xF,
-};`
+};
+```
 String Manipulation:
-`struct TString {
+```cpp
+struct TString {
 	uint64_t IDX;
 	uint64_t len;
 	char *data;
 	uint64_t _unocc = 0;
-};`
+};
+```
 Helpers:
 `lua_makeVar(void*, LuaType) -> Values`
 `lua_aMakeVarDouble(double) -> Values`
@@ -50,6 +54,12 @@ end
 ```cpp
 // clua_runtest.cpp
 #include <lua.hpp> // Only one library...
+#include <vector>
+#include <cstdint>
+#include <cstdlib>
+#include <math.h>
+#include <sstream>
+
 // A pretty basic print function.
 static Values PRINT(Values RDI, Values RSI, FuncArgs *ARGS) { // Classic start.
 	TString *ptr = (TString*)lua_getPtr(RDI); // Transform first arg to TString*

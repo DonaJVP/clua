@@ -108,3 +108,7 @@ int main() {
 	func(0,0,nullptr); // There does print Hello World!
 }
 ```
+
+#### TODO
+- Add 'static' keyword for static table, means no modifications at table elements but their values.
+- Add values types after local nor variable name declaration for better performance at runtime.

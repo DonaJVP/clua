@@ -1,0 +1,4393 @@
+#include "lua.hpp"
+#include <cstddef>
+#include <luaconf.h>
+#include <sys/mman.h>
+#include <asmjit/core.h>
+#include <asmjit/x86.h>
+#include <asmjit/host.h>
+#include <cstdint>
+#include <cstdlib>
+#include <stdexcept>
+#include <cstring>
+#include <iostream>
+#include <ostream>
+#include <sys/types.h>
+#include <algorithm>
+
+// This runs on duct tapes, if you remove one this wont work..
+
+using namespace asmjit;
+using namespace asmjit::x86;
+
+JitRuntime rt;
+
+void _F_ASM_SEARCHVALUENTHENRETURNRAX(std::vector<LuaLexFrame> *b, uint32_t *pos, x86::Assembler *a, lua_Scope *SCP, std::unordered_map<std::string, uint16_t> *_stack_mem, uint16_t *persize, bool _AllocateIfNotFound);
+
+Values *__ASM_F_ALLOCATEMORESPACEFORARRAYINTABLE_PTR(lua_Table *T, uint64_t S, Values X) {
+    uint32_t num = T->asize;
+    for (;;) {
+        if (num < S) {
+            num = num * num;
+        } else {
+            break;
+        }
+    }
+    //Got num. Now alloc that count
+    void *MEM = mmap(nullptr, num, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    memcpy(MEM, T->array, T->asize);
+    free((void*)T->array);
+    T->array = (Values*)MEM;
+    return &T->array[S];
+}
+
+Values __ASM_F_ALLOCATEMORESPACEFORARRAYINTABLE(lua_Table *T, uint64_t S, Values X) {
+    uint32_t num = T->asize;
+    for (;;) {
+        if (num < S) {
+            num = num * num;
+        } else {
+            break;
+        }
+    }
+    //Got num. Now alloc that count
+    void *MEM = mmap(nullptr, num, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    memcpy(MEM, T->array, T->asize);
+    free((void*)T->array);
+    T->array = (Values*)MEM;
+    return T->array[S];
+}
+
+Values __ASM_F_MAKEVAR(void *ptr, LuaType T) {
+    return NAN_BASE | (T << 48) | (uintptr_t)ptr;
+}
+
+LuaType __ASM_F_GETVARTYPE(Values o) {
+    return LuaType((o >> 48) & 0xF);
+}
+
+void *__ASM_F_GETPTR(Values k) {
+    return (void*)(k & PTR_MASK);
+}
+
+void __ASM_F_INDEXOR_NOT_VALID_TSTRING(TString *val) {
+    m_LuaErrorHandler->reportError(_lua_es_UnknownDataIdx, 0, std::string("Unknown variable"));
+    m_LuaErrorHandler->setFatal(true);
+}
+
+void __ASM_F_INDEXOR_NOT_VALID_NUM(uint32_t val) {
+    m_LuaErrorHandler->reportError(_lua_es_UnknownDataIdx, 0, std::string("Unknown variable"));
+    m_LuaErrorHandler->setFatal(true);
+}
+
+void __ASM_F_INDEXOR_NOT_VALID_NULL(uint32_t i) {
+    m_LuaErrorHandler->reportError(_lua_es_UnknownDataIdx, 0, std::string("Unknown variable"));
+    m_LuaErrorHandler->setFatal(true);
+}
+
+void __ASM_F_TABLE_NOT_VALID_OTHERTYPE(uint32_t i) {
+    m_LuaErrorHandler->reportError(_lua_es_UnknownDataIdx, 0, std::string("Unknown variable"));
+    m_LuaErrorHandler->setFatal(true);
+}
+
+TString *__ASM_F_STRINGMANIPULATOR_CONCAT(Values *a0, TString *b) {
+    //TString *a, TString *b
+    //TString *a = returnIndexOfStringPTR(_a);
+    //TString *b = returnIndexOfStringPTR(_b);
+    TString *a = (TString*)lua_getPtr(*a0);
+    char *res = new char[a->len+b->len];
+    uint32_t final_res_len;
+    memcpy(res, a->data, a->len); // a->len == std::string(a).size()
+    final_res_len = a->len;
+    memcpy(&res[final_res_len], b->data, b->len);
+    final_res_len += b->len;
+    TString *OBJ = new TString();
+    OBJ->IDX = stringTable.size()+1;
+    OBJ->data = res;
+    OBJ->len = final_res_len;
+    stringTable[std::string(OBJ->data)] = *OBJ;
+    return OBJ; //More portable usage.
+}
+
+// Some helpers to research variables in a function from arguments
+uint8_t searchForValuesOutSideNestedFunc(std::string stringID, lua_Scope *T) {
+    //Returns a int8 which should decide which memmap we must use
+    //The int64 is the offset
+    /*
+     * 0: Script Local Map
+     * 1: 'this' Function map
+     * 2: Upper Function map
+     */
+    uint8_t mapid = 0x01;
+    bool _on_final_scope = false;
+    lua_Scope *actual = T;
+    bool _reached_limit = false;
+    while (true) {
+        if (actual->_001) { // Found header.
+            //mapid = 0x02; //It has reached the limit, but not to research the variable.
+            _reached_limit = true;
+        } else if (actual->_002) {
+            // Can not go any further. Select this map, and if cant find, search on m_General
+            mapid = 0x00;
+            _on_final_scope = true;
+        }
+        if (actual->symbols.find(stringID) != actual->symbols.end()) {
+            //Found
+            return mapid;
+        } else {
+            if (!_on_final_scope) {
+                if (actual->rSCOPE != nullptr) {
+                    actual = actual->rSCOPE;
+                    if (_reached_limit) {
+                        mapid = 0x02;
+                    }
+                } else {
+                    _on_final_scope = true;
+                    //goto _S_GEN;
+                }
+            } else { // _on_final_scope == true
+                //_S_GEN:
+                return mapid;
+            }
+        }
+    }
+}
+
+// Function bundle.
+
+//LuaLexFrame = Start of the vector,
+std::pair<LuaLexFrame, std::vector<LuaLexFrame>> variableOpChain(std::vector<LuaLexFrame> *Keys, uint32_t *pos) {
+    //Should start at _L_VARNAME
+    std::vector<LuaLexFrame> FRAMES;
+    LuaLexFrame F;
+    LuaLexFrame F0;
+    bool _atr = 0;
+    F0 = Keys->at(*pos);
+    *pos = *pos+1; // DO NOT RESEARCH ON BAD MEMORY!
+    while (true) {
+        try {
+            F = Keys->at(*pos);
+            *pos = *pos+1;
+        } catch (std::out_of_range &e) {
+            // huff puff
+        }
+        if (_atr == 1) {
+            FRAMES.push_back(F);
+            if (F.key == _L_ON_TO_GO_END)
+                _atr = 0;
+            continue;
+        }
+        switch (F.key) {
+            case _L_VARNAME: {
+                FRAMES.push_back(F);
+                break;
+            }
+            case _L_ON_TO_GO: {
+                _atr = F.ATTRIB;
+                FRAMES.push_back(F);
+                break;
+            }
+            default: {
+                return {F0, FRAMES};
+            }
+        }
+    }
+}
+
+//(std::vector<LuaLexFrame> *Keys, LuaTableBase *ENV, uint32_t _LINES, uint32_t &pos) {
+void lua_CheckIfOnList(const std::string it, std::vector<std::string> *TR) {
+    for (std::string &q: *TR) {
+        if (q == it)
+            return;
+    }
+    TR->push_back(it);
+}
+
+//Eval 'for' expression
+int lua_evalForExpressionNgetVars(lua_Expression *a, lua_Scope *nextScope) {
+    if (a->size() == 1) {
+        if (a->front().size() > 0) {
+            LuaLexFrame k0 = a->front().front();
+            if (k0.key == _L_VARNAME) {
+                std::string nm_ = std::string(k0._data.begin(), k0._data.end());
+                lua_localSymbol K;
+                K.cacheReg = 0;
+                K.id = nm_;
+                K.qID = 2;
+                K.slot = (nextScope->count+1)*8;
+                nextScope->symbols.insert(std::pair<std::string, lua_localSymbol>(nm_, K));
+                nextScope->count++;
+            } else {
+                m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("At eval expr for 'For': No varname?"));
+                m_LuaErrorHandler->setFatal(true);
+                return 1;
+            }
+        }
+    } else if (a->size() > 1) {
+        // More terms...
+        if (a->at(0).size() == 1) {
+            LuaLexFrame k0 = a->front().front();
+            if (k0.key == _L_VARNAME) {
+                std::string nm_ = std::string(k0._data.begin(), k0._data.end());
+                lua_localSymbol K;
+                K.cacheReg = 0;
+                K.id = nm_;
+                K.qID = 2;
+                K.slot = (nextScope->count+1)*8;
+                nextScope->symbols.insert(std::pair<std::string, lua_localSymbol>(nm_, K));
+                nextScope->count++;
+            } else {
+                m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("At eval expr for 'For': No varname?"));
+                m_LuaErrorHandler->setFatal(true);
+                return 1;
+            }
+        }
+        if (a->at(1).size() > 0) {
+            LuaLexFrame k0 = a->at(1).front();
+            if (k0.key == _L_VARNAME) {
+                std::string nm_ = std::string(k0._data.begin(), k0._data.end());
+                lua_localSymbol K;
+                K.cacheReg = 0;
+                K.id = nm_;
+                K.qID = 2;
+                K.slot = (nextScope->count+1)*8;
+                nextScope->symbols.insert(std::pair<std::string, lua_localSymbol>(nm_, K));
+                nextScope->count++;
+            } else {
+                m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("At eval expr for 'For': No varname?"));
+                m_LuaErrorHandler->setFatal(true);
+                return 1;
+            }
+        }
+    } else {
+        m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("At eval expr for 'For': No expressions?"));
+        m_LuaErrorHandler->setFatal(true);
+        return 1;
+    }
+    return 0;
+}
+
+void lua_checkPathNupdateHV(lua_AddrPath *P, std::unordered_map<std::string, uint32_t> *hv, std::vector<std::string> *TR, lua_Scope *S) {
+    ///
+    LuaLexFrame HEADER = *P->getHeader();
+    lua_CheckIfOnList(P->getHeaderVarString(), TR);
+    ///
+    std::string a = P->getHeaderVarString();
+    if (hv->find(a) != hv->end()) {
+        hv->at(a) = hv->at(a) + 1;
+    } else {
+        //Maybe on another.... Scope?
+        lua_Scope *CACHE = S->rSCOPE;
+        while (true) {
+            if (CACHE != nullptr) {
+                if (CACHE->HottestVariables.find(a) != CACHE->HottestVariables.end()) {
+                    CACHE->HottestVariables.at(a) = CACHE->HottestVariables.at(a) + 1;
+                    hv->insert(std::pair<std::string, uint32_t>(a, CACHE->HottestVariables.at(a))); // Include this so we can put a 'equal' to the actual scope
+                    break;
+                }
+            } else {
+                hv->insert(std::pair<std::string, uint32_t>(a, 1)); //Huh?
+                break;
+            }
+        }
+    }
+}
+
+void lua_checkExprData(lua_Expression *expr, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv) {
+{return;}
+    std::vector<LuaLexFrame> *_ps0;
+    LuaLexFrame *_ps2;
+    uint16_t _ps1 = 0;
+    uint32_t _ps1l = 0;
+    while (true) {
+        try {
+            _ps0 = &expr->at(_ps1);
+        } catch (std::out_of_range &e) {
+            break;
+        }
+        while (true) {
+            try {
+                _ps2 = &_ps0->at(_ps1l);
+            } catch (std::out_of_range &e) {
+                break;
+            }
+            if (_ps2->key == _L_PATH) {
+                lua_checkPathNupdateHV(_ps2->addr, hv, TR, S);
+            }
+            _ps1l++;
+        }
+        _ps1++;
+    }
+}
+
+// transform a.b.c["huh"] to _L_PATH
+std::vector<LuaLexFrame> lua_AcquireNassembleLuaPath(std::vector<LuaLexFrame> *K, uint32_t *pos, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv) { //melting down...
+    std::vector<LuaLexFrame> toReturn;
+    LuaLexFrame F;
+    bool ontogo_last = false;
+    LuaLexFrame *PTR_TO_LAST = nullptr;
+    bool d = false;
+    while (true) {
+        try {
+            F = K->at(*pos);
+        } catch (std::out_of_range &e) {
+            goto __FINISH__;
+        }
+        switch (F.key) {
+            case _L_VARNAME: {
+                std::string a = std::string(F._data.begin(), F._data.end());
+                if (!d) {
+                    lua_CheckIfOnList(a, TR);
+                    d = true;
+                }
+                toReturn.push_back(F);
+                if (hv->find(a) != hv->end()) {
+                    hv->at(a) = hv->at(a) + 1;
+                } else {
+                    //Maybe on another.... Scope?
+                    lua_Scope *CACHE = S->rSCOPE;
+                    while (true) {
+                        if (CACHE != nullptr) {
+                            if (CACHE->HottestVariables.find(a) != CACHE->HottestVariables.end()) {
+                                CACHE->HottestVariables.at(a) = CACHE->HottestVariables.at(a) + 1;
+                                hv->insert(std::pair<std::string, uint32_t>(a, CACHE->HottestVariables.at(a))); // Include this so we can put a 'equal' to the actual scope
+                                break;
+                            }
+                        } else {
+                            hv->insert(std::pair<std::string, uint32_t>(a, 1)); //Huh?
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+            case _L_ON_TO_GO: {
+                if (F.ATTRIB) { // ==1
+                    *pos = *pos + 1;
+                    std::vector<LuaLexFrame> _0 = lua_AcquireNAssembleLuaExprBRKT(K, pos, S, TR, hv);
+                    LuaLexFrame J;
+                    J.key = _L_EXPRESSION_BRKT;
+                    J.EXPR_BRKT = _0;
+                    toReturn.push_back(J);
+                    ontogo_last = true;
+                    PTR_TO_LAST = &J;
+                } else {
+                    toReturn.push_back(F);
+                }
+                break;
+            }
+            default: {
+                *pos = *pos - 1;
+                goto __FINISH__;
+            }
+        }
+        *pos = *pos + 1;
+    }
+    __FINISH__:
+    //Define a boolean in the last key just for address <if specified>
+    if (!ontogo_last)
+        toReturn.at(toReturn.size()-1)._LK = true;
+    else {
+        PTR_TO_LAST->_LK = true;
+    }
+    return toReturn;
+}
+
+// transform [a or b and c] to _L_EXPRESSION_BRKT
+std::vector<LuaLexFrame> lua_AcquireNAssembleLuaExprBRKT(std::vector<LuaLexFrame> *Keys, uint32_t *pos, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv) {
+    LuaLexFrame F;
+    std::vector<LuaLexFrame> _R;
+    while (true) {
+        try {
+            F = Keys->at(*pos);
+        } catch (std::out_of_range &e) {
+            return _R;
+        }
+        switch (F.key) {
+            case _L_VARNAME: {
+                std::vector<LuaLexFrame> _0 = lua_AcquireNassembleLuaPath(Keys, pos, S, TR, hv);
+                LuaLexFrame _139491192;
+                _139491192.key = _L_PATH;
+                _139491192.EXPR_BRKT = _0;
+                _139491192.subkey = _0.at(0).subkey;
+                _R.push_back(_139491192); //melting down
+                break;
+            }
+            case _L_FUNCTION: {
+                // This case should be handled back by other function, else this will collision with out definitions and we will be dead.
+                lua_Scope *nsc = new lua_Scope();
+                nsc->rSCOPE = S;
+                nsc->lSCOPE = std::vector<lua_Scope*>();
+                
+                //Must see if theres _L_F_ARGS_START
+                try {
+                    LuaLexFrame g;
+                    g = Keys->at(*pos+1);
+                    if (g.key != _L_F_ARGS_START) {
+                        // Crash
+                    } else {
+                        *pos = *pos + 1;
+                        lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, S, TR, hv);
+                        uint32_t cnt_scope = 0;
+                        for (std::vector<LuaLexFrame> &I: a) {
+                            if (I.at(0).key == _L_VARNAME) {
+                                cnt_scope = cnt_scope+0+1; // base_scope can't be used here
+                                lua_localSymbol j;
+                                j.qID = 1;
+                                j.slot = cnt_scope*8;
+                                j.id = std::string(I.at(0)._data.begin(), I.at(0)._data.end());
+                                nsc->symbols.insert(std::pair<std::string, lua_localSymbol>(std::string(I.at(0)._data.begin(), I.at(0)._data.end()), j));
+                            } else {
+                                // Crash
+                            }
+                        }
+                    }
+                } catch (std::exception &e) {
+                    //Crash
+                }
+                
+                std::vector<lua_biOpCode> *OPC = new std::vector<lua_biOpCode>(lua_B_F_OP(Keys, pos, nsc, true));
+                lua_biOpCode *c = new lua_biOpCode();
+                c->OPCODE = l_b_o_c_FUN;
+                c->FuncPTR2 = OPC;//luaBundleFunction(OPC, nsc, true);
+                c->_F_LOCAL = false;
+                c->toMemOffset = 0;
+                LuaLexFrame FR_M;
+                FR_M.key = _L_FUNCTIONPOINTER;
+                FR_M._OPCODE = c;
+                _R.push_back(FR_M);
+                break;
+            }
+            case _L_F_ARGS_START: {
+                lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, S, TR, hv);
+                LuaLexFrame b;
+                b.key = _L_EXPRESSION;
+                b.EXPR = a;
+                _R.push_back(b);
+                break;
+            }
+            case _L_ON_TO_GO: {
+                if (F.ATTRIB != 1) {
+                    _R.push_back(F);
+                    break;
+                }
+                *pos = *pos + 1;
+                // Mustlua_AcquireNAssembleLuaExpr start over other.
+                std::vector<LuaLexFrame> a = lua_AcquireNAssembleLuaExprBRKT(Keys, pos, S, TR, hv);
+                LuaLexFrame b;
+                b.key = _L_EXPRESSION_BRKT;
+                b.EXPR_BRKT = a;
+                _R.push_back(b);
+                break;
+            }
+            case _L_ON_TO_GO_END: {
+                *pos = *pos + 1;
+                return _R;
+            }
+            default: {
+                _R.push_back(F);
+            }
+        }
+        *pos = *pos + 1;
+    }
+}
+
+// transform from (1, 2, 3, a or c) to _L_EXPRESSION
+lua_Expression lua_AcquireNAssembleLuaExpr(std::vector<LuaLexFrame> *Keys, uint32_t *pos, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv) {
+    LuaLexFrame F;
+    std::vector<std::vector<LuaLexFrame>> _R;
+    _R.push_back(std::vector<LuaLexFrame>());
+    uint16_t leveling = 0;
+    while (true) {
+        try {
+            F = Keys->at(*pos);
+        } catch (std::out_of_range &e) {
+            return _R;
+        }
+        switch (F.key) {
+            case _L_VARNAME: {
+                std::vector<LuaLexFrame> _0 = lua_AcquireNassembleLuaPath(Keys, pos, S, TR, hv);
+                LuaLexFrame _139491192;
+                _139491192.key = _L_PATH;
+                _139491192.EXPR_BRKT = _0;
+                _139491192.subkey = _0.at(0).subkey;
+                _R.at(leveling).push_back(_139491192); //melting down
+                break;
+            }
+            case _L_FUNCTION: {
+                // This case should be handled back by other function, else this will collision with out definitions and we will be dead.
+                lua_Scope *nsc = new lua_Scope();
+                nsc->rSCOPE = S;
+                nsc->lSCOPE = std::vector<lua_Scope*>();
+                //Must see if theres _L_F_ARGS_START
+                try {
+                    LuaLexFrame g;
+                    g = Keys->at(*pos+1);
+                    if (g.key != _L_F_ARGS_START) {
+                        // Crash
+                    } else {
+                        *pos = *pos + 1;
+                        lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, S, TR, hv);
+                        uint32_t cnt_scope = 0;
+                        for (std::vector<LuaLexFrame> &I: a) {
+                            if (I.at(0).key == _L_VARNAME) {
+                                cnt_scope = cnt_scope+0+1; // base_scope can't be used here
+                                lua_localSymbol j;
+                                j.qID = 1;
+                                j.slot = cnt_scope*8;
+                                j.id = std::string(I.at(0)._data.begin(), I.at(0)._data.end());
+                                nsc->symbols.insert(std::pair<std::string, lua_localSymbol>(std::string(I.at(0)._data.begin(), I.at(0)._data.end()), j));
+                            } else {
+                                // Crash
+                            }
+                        }
+                    }
+                } catch (std::exception &e) {
+                    //Crash
+                }
+                std::vector<lua_biOpCode> *OPC = new std::vector<lua_biOpCode>(lua_B_F_OP(Keys, pos, nsc, true));
+                lua_biOpCode *c = new lua_biOpCode();
+                c->OPCODE = l_b_o_c_FUN;
+                c->FuncPTR2 = OPC;//luaBundleFunction(OPC, nsc, true);
+                c->_F_LOCAL = false;
+                c->toMemOffset = 0;
+                LuaLexFrame FR_M;
+                FR_M.key = _L_FUNCTIONPOINTER;
+                FR_M._OPCODE = c;
+                _R.at(leveling).push_back(FR_M);
+                break;
+            }
+            case _L_ON_TO_GO: {
+                if (F.ATTRIB == 1) {
+                    *pos = *pos + 1;
+                    std::vector<LuaLexFrame> a = lua_AcquireNAssembleLuaExprBRKT(Keys, pos, S, TR, hv);
+                    LuaLexFrame b;
+                    b.key = _L_EXPRESSION_BRKT;
+                    _R.at(leveling).push_back(b);
+                    break;
+                }
+            }
+            case _L_F_ARGS_START: {
+                // Must lua_AcquireNAssembleLuaExpr start over other.
+                *pos = *pos + 1;
+                lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, S, TR, hv);
+                LuaLexFrame b;
+                b.key = _L_EXPRESSION;
+                b.EXPR = a;
+                _R.at(leveling).push_back(b);
+                break;
+            }
+            case _L_F_ARGS_END: {
+                //*pos = *pos + 1;
+                return _R;
+            }
+            case _L_SEPARATOR: {
+                _R.push_back(std::vector<LuaLexFrame>());
+                leveling++;
+                break;
+            }
+            default: {
+                _R.at(leveling).push_back(F);
+                break;
+            }
+        }
+        *pos = *pos + 1;
+    }
+}
+
+void updateVariablesUsageLevelToScope(lua_Scope *MAIN) {
+    //Mark the first 4.
+    std::unordered_map<std::string, bool> G;
+    for (auto &e: MAIN->HottestVariables) {
+        G[e.first] = true;
+    }
+    uint32_t c = MAIN->HottestVariables.size();
+    while (c) {
+        uint32_t maxpt = 0;
+        std::string cache = 0;
+        for (auto &i: MAIN->HottestVariables) {
+            if (G.at(i.first)) {
+                if (i.second >= maxpt) {
+                    maxpt = i.second;
+                    cache = i.first;
+                }
+            }
+        }
+        G.at(cache) = false;
+        MAIN->HVtoCompiler.push_back(std::pair<std::string, uint32_t>(cache, maxpt));
+        c--;
+    }
+}
+
+void updateVariablesTypes(lua_Scope *SCP) {
+    
+}
+
+std::string dumpInfoo(std::vector<LuaLexFrame> S) {
+    std::string _s;
+    _s.append("<> ");
+    for (LuaLexFrame &i: S) {
+        _s.append("$");
+        _s.append(std::to_string(static_cast<int>(i.key)));
+        _s.append(" ");
+    }
+    _s.append(" <>END");
+    return _s;
+}
+
+x86::Gp _HELPER_PARSEREGISTER_FROMOFFSET(uint32_t crt) {
+    switch (crt) {
+        case 0:
+            return x86::rdi;
+        case 8:
+            return x86::rsi;
+        case 16:
+            return x86::rcx;
+    }
+}
+
+// Translates from LuaLexFrame keys to compatible scope mode. Which can be used for optimizations and for making ASM code easier.
+// When this reaches a function, this will ONLY ignore that part and call it self to build.
+std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *pos, lua_Scope *bulldozer, bool _ONLYFUNC, bool _INSIDEAFUNC) {
+    // If _ONLYFUNC then it should start on _L_F_ARGS_END
+    std::vector<LuaLexFrame> updated = analizeNupdateConstantsNvars(Keys);
+    std::cout << "KEYS OPTIMIZED: " << updated.size() << " ;;;";
+    std::string _c = dumpInfoo(updated);
+    std::cout << _c << std::endl;
+    Keys = &updated;
+    std::vector<lua_biOpCode> opcodes;
+    opcodes.reserve(64); // Prevent reallocation-triggered copies of partially-init opcodes
+    uint16_t scope = 0;
+    uint16_t _to_close_args = 0;
+    SymbolTable *t_ = &bulldozer->symbols;
+    lua_biOpCode cache2;
+    lua_Scope *block0 = bulldozer; //Must be created one.
+    block0->rSCOPE = nullptr;
+    //lock0->lSCOPE = new lua_Scope();
+    lua_Scope *_LastBLOCK = block0;
+    std::vector<LuaLexFrame> cache;
+    std::vector<LuaLexFrame> cache3;
+    std::vector<std::string> toRecover; //If not found on actual function search into builder's func map
+    bool _decL_S = false;
+    bool _declr_L = false;
+    bool _declr_sto = false;
+    uint64_t *_dir = nullptr;
+    bool _for_declr_got = false;
+    int16_t _to_close_table = 0;
+    uint64_t _m_offset = 0;
+    bool _table_Start = false;
+    std::vector<LuaLexFrame> _subTable;
+    bool _B_D_F = false;
+    bool _D_F_I = false;
+    bool _F_F_0 = false;
+    bool _D_I_T = false;
+    bool _D_S_0 = false;
+    bool _IF = false;
+    bool _FOR = false;
+    bool _ELSE = false;
+    bool _ELSEIF = false;
+    bool _LOCALDEFINED = false;
+    uint32_t base_scope = 0;
+    uint32_t cnt_scope = 0;
+    uint32_t to_reserv = 0;
+    LuaLexFrame _LAST_FRAME;
+    LuaLexFrame _FRM;
+    //pos--;
+    uint32_t _pos_lastscope = 0;
+    if (_ONLYFUNC) {
+        // Allocate space for args.
+        for (auto &e: bulldozer->symbols) {
+            base_scope++;
+        }
+    }
+    bool _F_F_U = false;
+    //a->mov(x86::rdi, (uint64_t)_CACHE0);
+    std::vector<LuaLexFrame> _C_C_;
+    uint16_t t = 1;
+    for (LuaLexFrame &K: *Keys) {
+        t++;
+    }
+    while (true) {
+        try {
+            _FRM = Keys->at(*pos);
+        } catch (std::out_of_range &e) {
+            goto _TERM_;
+        }
+        // Thertiary
+        if (_table_Start) {
+            // Contents must go to the _subTable array, so we can build it with a optional pointer in online assembly (For function)
+            _subTable.push_back(_FRM);
+            if (_FRM.key == _L_TABLE_START) {
+                _to_close_table++;
+            }
+            if (_FRM.key == _L_TABLE_END) {
+                if (_to_close_table == 0) {
+                    //CRASH
+                }
+                _to_close_table--;
+                if (_to_close_table <= 0) {
+                    _table_Start = false;
+                    continue;
+                }
+            }
+            continue;
+        }
+        // Secondary
+        switch (_FRM.key) { //Determination.
+            case _L_BlockEnd: {
+                if (_decL_S) {
+                    // Crash
+                }
+                lua_biOpCode c;
+                c.OPCODE = l_b_o_c_SCE;
+                opcodes.push_back(c);
+                if (_ONLYFUNC) {
+                    return opcodes;
+                }
+                // Reverse to blockstart.
+                t_ = &_LastBLOCK->rSCOPE->symbols;
+                updateVariablesUsageLevelToScope(_LastBLOCK);
+                _LastBLOCK = _LastBLOCK->rSCOPE;
+                break;
+            }
+            case _L_BlockStart: {
+                lua_biOpCode c;
+                c.OPCODE = l_b_o_c_SCP;
+                //Create new scope and allocate.
+                lua_Scope *nsc = new lua_Scope();
+                nsc->rSCOPE = _LastBLOCK;
+                nsc->symbols = std::unordered_map<std::string, lua_localSymbol>();
+                nsc->HottestVariables = std::unordered_map<std::string, uint32_t>();
+                _LastBLOCK->lSCOPE.push_back(nsc);
+                t_ = &nsc->symbols;
+                nsc->base_slot = _LastBLOCK->base_slot+_LastBLOCK->count;
+                nsc->count = 0;
+                _LastBLOCK = nsc;
+                c.SCOPE = nsc;
+                opcodes.push_back(c);
+                break;
+            }
+            case _L_EXPRESSION: {
+                // Unique key, maybe it are for IF or FOR methods.
+                lua_biOpCode rle;
+                if (_FOR) {
+                    rle.OPCODE = l_b_o_c_FOR;
+                    _FOR = false;
+                } else if (_ELSEIF) {
+                    rle.OPCODE = l_b_o_c_ELS;
+                    _ELSEIF = false;
+                } else {
+                    rle.OPCODE = l_b_o_c_RLE;
+                }
+                rle.p = _FRM.EXPR;
+                opcodes.push_back(rle);
+                break;
+            }
+            case _L_DECLR_PLUS_DATA: {
+                if (_FRM.local) {
+                    _LOCALDEFINED = true;
+                    if (!_FRM.multipleway) {
+                        LuaLexFrame HEADER = *_FRM.addr->getHeader();
+                        std::cout << std::dec << "LastBlockBaseSlot: " <<_LastBLOCK->base_slot << ", Count=" << _LastBLOCK->count+1 << std::endl;
+                        size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
+                        _LastBLOCK->count++;
+                        lua_localSymbol o;
+                        o.slot = slot-8;
+                        o.qID = 2;
+                        o.id = std::string(HEADER._data.begin(), HEADER._data.end());
+                        _LastBLOCK->symbols.insert(std::pair<std::string, lua_localSymbol>(std::string(HEADER._data.begin(), HEADER._data.end()), o));
+                        _m_offset = slot-8;
+                        if (slot >= to_reserv)
+                            to_reserv = slot;
+                        std::cout << "RESERV: " <<to_reserv << " : " << (slot-8) << std::endl;
+                        // Include raw data
+                        lua_biOpCode c;
+                        c.OPCODE = l_b_o_c_STO;
+                        c.p = _FRM.EXPR;
+                        c.toMemOffset = _m_offset;
+                        opcodes.push_back(c);
+                    } else {
+                        uint64_t _startpointmem = 0;
+                        uint64_t _endpointmem = 0;
+                        for (LuaLexFrame &HEADER: _FRM.EXPR_BRKT) { // Theres only labels.
+                            size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
+                            if (_startpointmem == 0)
+                                _startpointmem = slot;
+                            _LastBLOCK->count = _LastBLOCK->count + 1;
+                            lua_localSymbol o;
+                            o.slot = slot-8;
+                            o.qID = 2;
+                            o.id = std::string(HEADER._data.begin(), HEADER._data.end());
+                            _LastBLOCK->symbols.insert(std::pair<std::string, lua_localSymbol>(std::string(HEADER._data.begin(), HEADER._data.end()), o));
+                            if (slot >= to_reserv)
+                                to_reserv = slot;
+                            _endpointmem = slot+8;
+                        }
+                        lua_biOpCode c;
+                        c.OPCODE = l_b_o_c_STM;
+                        c.p = _FRM.EXPR;
+                        c.size = _endpointmem;
+                        c.toMemOffset = _startpointmem;
+                        c.fixedaddr = (_endpointmem - _startpointmem)*8;
+                        c.ATR = 1;
+                        opcodes.push_back(c);
+                    }
+                    if (_FRM.ATTRIB == 0xCF)
+                        abort();
+                } else {
+                    lua_biOpCode c;
+                    c.OPCODE = l_b_o_c_DEC;
+                    c.LLF = *_FRM.addr->getData();
+                    c.p = _FRM.EXPR;
+                    opcodes.push_back(c);
+                }
+                lua_checkExprData(&_FRM.EXPR, _LastBLOCK, &toRecover, &_LastBLOCK->HottestVariables);
+                break;
+            }
+            case _L_NEWLINE: {
+                lua_biOpCode c;
+                c.OPCODE = l_b_o_c_SSE;
+                opcodes.push_back(c);
+                break;
+            }
+            case _L_SEPARATOR: {
+                _L_SEPARATOR_CODE:
+                lua_biOpCode c;
+                c.OPCODE = l_b_o_c_SSE;
+                opcodes.push_back(c);
+                break;
+            }
+            case _L_TABLE_START: {
+                if (!_table_Start) {
+                    _table_Start = true;
+                    _to_close_table++;
+                }
+                _subTable.push_back(_FRM);
+                break;
+            }
+            case _L_TABLE_END: {
+                // Push _subTable to be an dynamic object. Also, with the scope for dynamic variables placement (Online)
+                lua_biOpCode t;
+                t.OPCODE = l_b_o_c_TBL;
+                t.SCOPE = _LastBLOCK;
+                t.LLF = _subTable;
+                _subTable.clear();
+                opcodes.push_back(t);
+                break;
+            }
+            /*case _L_F_ARGS_START: {
+                _D_F_I = false;
+                _F_F_0 = true;
+                // Check if it are a function call. Must be separated.
+                multicache.resize(multicache.size()+1);
+                multicache.at(multicache.size()) = std::vector<LuaLexFrame>();
+                //multicache.at(multicache.size())[] // EXAMPLE
+                _to_close_args++;
+                *pos = *pos + 1;
+                lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, _LastBLOCK, &toRecover, &_LastBLOCK->HottestVariables);
+                if (_D_F_I) {
+                    //Function definition
+                    lua_Scope *nsc = new lua_Scope();
+                    nsc->rSCOPE = _LastBLOCK;
+                    nsc->lSCOPE = std::vector<lua_Scope*>();
+                    uint32_t cnt_scope = 0;
+                    for (std::vector<LuaLexFrame> &I: a) {
+                        if (I.at(0).key == _L_VARNAME) {
+                            lua_localSymbol o;
+                            o.qID = 1;
+                            o.slot = cnt_scope*8;
+                            o.id = std::string(I.at(0)._data.begin(), I.at(0)._data.end());
+                            nsc->symbols.insert(std::pair<std::string, lua_localSymbol>(std::string(I.at(0)._data.begin(), I.at(0)._data.end()), o));
+                            cnt_scope = cnt_scope+0+1; // base_scope can't be used here
+                        } else {
+                            // Crash
+                        }
+                    }
+                    nsc->toEXbytes = cnt_scope*8; // Limit.
+                    if (!_ONLYFUNC)
+                        nsc->rSCOPE->_001 = true;
+                    //Bundle.
+                    pos++;
+                    std::vector<lua_biOpCode> *OPC = new std::vector<lua_biOpCode>(lua_B_F_OP(Keys, pos, nsc, true, _ONLYFUNC));
+                    lua_biOpCode c;
+                    c.OPCODE = l_b_o_c_FUN;
+                    c.FuncPTR2 = OPC;//luaBundleFunction(OPC, nsc, true);
+                    c.LLF = cache;
+                    c._F_LOCAL = _declr_L;
+                    
+                    
+                    // May put on first top
+                    
+                    if (_declr_L) {
+                        LuaLexFrame __F = cache[0];
+                        size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
+                        _LastBLOCK->count++;
+                        
+                        lua_localSymbol o;
+                        o.slot = slot;
+                        o.qID = 0;
+                        o.id = std::string(__F._data.begin(), __F._data.end());
+                        
+                        t_->insert(std::pair<std::string, lua_localSymbol>(std::string(__F._data.begin(), __F._data.end()), o));
+                        _m_offset = slot;
+                        
+                        if (slot >= to_reserv)
+                            to_reserv = slot; //mmap
+                    }
+                    
+                    cache.clear();
+                    c.toMemOffset = _m_offset;
+                    opcodes.push_back(c);
+                } else {
+                    // Call part (Yes.)
+                    if (!cache.empty()) {
+                        // Has var dir
+                        lua_biOpCode c;
+                        c.OPCODE = l_b_o_c_CFN;
+                        c.LLF = cache; // Call dir
+                        c.p = a;
+                        opcodes.push_back(c);
+                    } else {
+                        if (_for_declr_got) {
+                            bool res = lua_evalForExpressionNgetVars(&a, _LastBLOCK); // Just a few declarations...
+                            if (res) {
+                                //Something crashed. return null
+                                return std::vector<lua_biOpCode>({ lua_biOpCode(l_b_o_c_NOP)});
+                            }
+                            _for_declr_got = false;
+                        }
+                        // If empty, it should be like this expression: (a and b or c)
+                        if (opcodes.at(opcodes.size()-2).OPCODE == l_b_o_c_FUN) {
+                            // Backwards compatibilty
+                            lua_biOpCode c;
+                            c.OPCODE = l_b_o_c_CFN;
+                            c.p = a;
+                            opcodes.push_back(c);
+                            break;
+                        }
+                        lua_biOpCode c;
+                        c.OPCODE = l_b_o_c_RLE;
+                        c.p = a;
+                        opcodes.push_back(c);
+                    }
+                }
+                break;
+            }*/
+            case _L_FUNCTION: {
+                if (_FRM.ATTRIB > 0) {
+                    lua_Expression args = _FRM.EXPR;
+                    lua_Scope *startPoint = new lua_Scope();
+                    startPoint->lSCOPE = std::vector<lua_Scope*>();
+                    startPoint->rSCOPE = _LastBLOCK;
+                    uint32_t _current = 0;
+                    for (std::vector<LuaLexFrame> &arg: args) {
+                        if (arg.size() == 0)
+                            continue;
+                        LuaLexFrame *_LABEL = &arg.at(0);
+                        if (_LABEL->key == _L_PATH) { // It can't be _L_VARNAME as we compiled the entire opcodes vector to erradicate manual=>0 keys
+                            if (_LABEL->addr->needToResolveAddr()) {
+                                m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("Only one variable is allowed per comma, not a full statement."));
+                                m_LuaErrorHandler->setFatal(true);
+                                return std::vector<lua_biOpCode>();
+                            }
+                            LuaLexFrame *LABEL = _LABEL->addr->getHeader();
+                            ///
+                            lua_localSymbol sym;
+                            sym.qID = 2;
+                            sym.slot = _current*8;
+                            if ((_current*8)<17)
+                                sym.register_ = _HELPER_PARSEREGISTER_FROMOFFSET(_current);
+                            sym.id = _LABEL->addr->getHeaderVarString();
+                            startPoint->symbols.insert(std::pair<std::string, lua_localSymbol>(sym.id, sym));
+                            _current++;
+                        }
+                    }
+                    startPoint->lvl = _current;
+                    startPoint->toEXbytes = _current*8;
+                    if (!_ONLYFUNC)
+                        startPoint->rSCOPE->_001 = true;
+                    //pos++;
+                    uint32_t *_cPos = new uint32_t(0);
+                    std::vector<lua_biOpCode> *OPC = new std::vector<lua_biOpCode>(lua_B_F_OP(&_FRM.EXPR_BRKT, _cPos, startPoint, true, _ONLYFUNC));
+                    delete _cPos;
+                    lua_biOpCode op;
+                    op.OPCODE = l_b_o_c_FUN;
+                    op.FuncPTR2 = OPC;
+                    op.SCOPE = startPoint;
+                    op.path = _FRM.addr;
+                    op._F_LOCAL = _FRM.local;
+                    opcodes.push_back(op);
+                } else {
+                    // How tf did this occur?
+                    
+                }
+                break;
+            }
+            case _L_CALL: {
+                lua_biOpCode c;
+                if (_FRM.ATTRIB == 0) {
+                    c.path = _FRM.addr;
+                    c.ATR = 0;
+                    c.fixedaddr = _FRM.skipcheck ? ((uint64_t)_FRM.a) : 0;
+                } else {
+                    c.ATR = 1;
+                    c.LLF = _FRM.EXPR_BRKT; // Raw form.
+                }
+                c.OPCODE = l_b_o_c_CFN;
+                c.p = _FRM.EXPR;
+                lua_checkExprData(&_FRM.EXPR, _LastBLOCK, &toRecover, &_LastBLOCK->HottestVariables);
+                opcodes.push_back(c);
+                break;
+            }
+            case _L_F_ARGS_END: {
+                break;
+            }
+            case _L_FOR: {
+                lua_biOpCode c;
+                // INITIALIZE NEW SCOPE.
+                //Create new scope and allocate.
+                lua_Scope *nsc = new lua_Scope();
+                nsc->rSCOPE = _LastBLOCK;
+                nsc->symbols = std::unordered_map<std::string, lua_localSymbol>();
+                nsc->HottestVariables = std::unordered_map<std::string, uint32_t>();
+                _LastBLOCK->lSCOPE.push_back(nsc);
+                t_ = &nsc->symbols;
+                nsc->base_slot = _LastBLOCK->base_slot+_LastBLOCK->count;
+                nsc->count = 0;
+                _LastBLOCK = nsc;
+                c.SCOPE = nsc;
+                // The first two variables (Might be one...) can be saved as stack mem slot!
+                LuaLexFrame *_tS0 = nullptr;
+                LuaLexFrame *_tS1 = nullptr;
+                if (_FRM.EXPR.size() > 0) {
+                    LuaLexFrame *_s0 = nullptr;
+                    try {
+                        _s0 = &_FRM.EXPR.at(0).at(0);
+                    } catch (std::out_of_range &e) {
+                        m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("Internal error. Bad code for _L_FOR. Not known variable."));
+                        m_LuaErrorHandler->setFatal(true);
+                        return std::vector<lua_biOpCode>();
+                    }
+                    if (_s0->key == _L_PATH) {
+                        //Save this.
+                        _tS0 = _s0;
+                        LuaLexFrame HEADER = *_s0->addr->getHeader();
+                        size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
+                        _LastBLOCK->count++;
+                        lua_localSymbol o;
+                        o.slot = slot-8;
+                        o.qID = 2;
+                        o.id = std::string(HEADER._data.begin(), HEADER._data.end());
+                        t_->insert(std::pair<std::string, lua_localSymbol>(std::string(HEADER._data.begin(), HEADER._data.end()), o));
+                        _m_offset = slot;
+                        if (slot >= to_reserv)
+                            to_reserv = slot;
+                        c.ptr = (void*)returnCompiledString(std::string(HEADER._data.begin(), HEADER._data.end()));
+                    }
+                    std::vector<LuaLexFrame> *_s1 = nullptr;
+                    try {
+                        _s1 = &_FRM.EXPR.at(1);
+                    } catch (std::out_of_range &e) {
+                        goto _ENDZONE;
+                    }
+                    if (_s1->size() > 0) {
+                        LuaLexFrame *_s2 = nullptr;
+                        try {
+                            _s2 = &_s1->at(0);
+                        } catch (std::out_of_range &e) {
+                            goto _ENDZONE;
+                        }
+                        if (_s2->key == _L_PATH) {
+                            _tS1 = _s2;
+                            LuaLexFrame HEADER = *_s2->addr->getHeader();
+                            size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
+                            _LastBLOCK->count++;
+                            lua_localSymbol o;
+                            o.slot = slot-8;
+                            o.qID = 2;
+                            o.id = std::string(HEADER._data.begin(), HEADER._data.end());
+                            t_->insert(std::pair<std::string, lua_localSymbol>(std::string(HEADER._data.begin(), HEADER._data.end()), o));
+                            _m_offset = slot;
+                            if (slot >= to_reserv)
+                                to_reserv = slot;
+                        }
+                    } else {
+                       // m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("Internal error."));
+                       // m_LuaErrorHandler->setFatal(true);
+                       // return std::vector<lua_biOpCode>();
+                    }
+                }
+                _ENDZONE:
+                c.OPCODE = l_b_o_c_FOR; 
+                c.p = _FRM.EXPR;
+                std::vector<LuaLexFrame> toSPT;
+                if (_tS0 != nullptr) {
+                    toSPT.push_back(*_tS0);
+                }
+                if (_tS1 != nullptr) {
+                    toSPT.push_back(*_tS1);
+                }
+                c.LLF = toSPT;
+                opcodes.push_back(c);
+                break; 
+            }
+            case _L_AND: {
+                lua_biOpCode c;
+                c.OPCODE = l_b_o_c_AND;
+                opcodes.push_back(c);
+                break;
+            }
+            case _L_NOT: {
+                lua_biOpCode c;
+                c.OPCODE = l_b_o_c_NOT;
+                opcodes.push_back(c);
+                break;
+            }
+            case _L_IF: {
+                lua_biOpCode c;
+                //Create new scope and allocate.
+                lua_Scope *nsc = new lua_Scope();
+                nsc->rSCOPE = _LastBLOCK;
+                nsc->symbols = std::unordered_map<std::string, lua_localSymbol>();
+                nsc->HottestVariables = std::unordered_map<std::string, uint32_t>();
+                _LastBLOCK->lSCOPE.push_back(nsc);
+                t_ = &nsc->symbols;
+                nsc->base_slot = _LastBLOCK->base_slot+_LastBLOCK->count;
+                nsc->count = 0;
+                _LastBLOCK = nsc;
+                c.SCOPE = nsc;
+                c.OPCODE = l_b_o_c_IFS; 
+                c.p = _FRM.EXPR;
+                opcodes.push_back(c);
+                break;
+            }
+            case _L_ELSE: {
+                lua_biOpCode c;
+                c.OPCODE = l_b_o_c_ELS;
+                opcodes.push_back(c);
+                break;
+            }
+            case _L_ELSEIF: {
+                _ELSEIF = true;
+                break;
+            }
+            /*case _L_FUNCTION: { //hate this shit
+                //function.
+                // <function>(a, b, c)   OR   <function> hithere(a, b, c)
+                // arguments should stand as a symbol.
+                _D_F_I = true;
+                break;
+            }*/
+            default: {
+                defaulty:
+                //l_b_o_c_LXC : Lexical complex thing
+                if (!cache.empty()) {
+                    lua_biOpCode k;
+                    k.OPCODE = l_b_o_c_VTN;
+                    k.LLF = cache;
+                    cache.clear();
+                }
+                lua_biOpCode c;
+                c.OPCODE = l_b_o_c_LXC;
+                c.KEY = _FRM.key;
+                opcodes.push_back(c);
+                break;
+            }
+        }
+        *pos = *pos + 1;
+        _LAST_FRAME = _FRM;
+    }
+    _TERM_:
+    // SPECIAL NODES
+    lua_biOpCode lCf;
+    if (_LOCALDEFINED) {
+        lCf.ATR = 0x1;
+    } else {
+        lCf.ATR = 0x0;
+    }
+    lCf.OPCODE = l_b_o_c_UPV;
+    opcodes.push_back(lCf);
+    // DEPENDENCIES
+    lua_biOpCode dep;
+    dep.OPCODE = l_b_o_c_DEP;
+    if (_INSIDEAFUNC) {
+        //Let's evaluate those variables which need revision
+        for (const std::string &s: toRecover) {
+            uint8_t pair = searchForValuesOutSideNestedFunc(s, bulldozer);
+            if (pair == 0x02) {
+                dep.nestedtoUpValues.push_back(s);
+            }
+        }
+    }
+    opcodes.push_back(dep);
+    // MEMORY
+    lua_biOpCode mem;
+    mem.OPCODE = l_b_o_c_MEM;
+    mem.size = to_reserv;
+    opcodes.push_back(mem);
+    // Update variables usage.
+    opcodes = *lua_Scope::updateHottestVariablesForKeys(block0, &opcodes);
+    return opcodes;
+}
+
+
+
+
+lua_localSymbol *acquireVariableFromExtensionsPtr(std::string stringID, lua_Scope *T) {
+    //Returns a int8 which should decide which memmap we must use
+    //The int64 is the offset
+    /*
+     * 0: Script Local Map
+     * 1: 'this' Function map
+     * 2: Upper Function map
+     */
+    uint8_t mapid = 0x01;
+    bool _on_final_scope = false;
+    lua_Scope *actual = T;
+    bool _reached_limit = false;
+    
+    while (true) {
+        if (actual->symbols.find(stringID) != actual->symbols.end()) {
+            return &actual->symbols.find(stringID)->second;
+        } else {
+            if (actual->rSCOPE != nullptr) {
+                actual = actual->rSCOPE;
+            } else {
+                // Limit reached
+                return new lua_localSymbol{0, 3, 0, x86::rax, stringID};
+            }
+        }
+    }
+}
+
+lua_localSymbol acquireVariableFromExtensions(std::string stringID, lua_Scope *T) {
+    //Returns a int8 which should decide which memmap we must use
+    //The int64 is the offset
+    /*
+     * 0: Script Local Map
+     * 1: 'this' Function map
+     * 2: Upper Function map
+     */
+    uint8_t mapid = 0x01;
+    bool _on_final_scope = false;
+    lua_Scope *actual = T;
+    bool _reached_limit = false;
+    
+    while (true) {
+        if (actual->symbols.find(stringID) != actual->symbols.end()) {
+            return actual->symbols.find(stringID)->second;
+        } else {
+            if (actual->rSCOPE != nullptr) {
+                actual = actual->rSCOPE;
+            } else {
+                // Limit reached
+                lua_localSymbol k;
+                k.qID = 3;
+                //k.slot = (uint64_t)_F_ASM_NOTGUARANTEED_GETVALUE(m_General, returnCompiledString(stringID), nullptr);
+                k.slot = (uint64_t)returnCompiledString(stringID);
+                return k;
+            }
+        }
+    }
+}
+
+lua_localSymbol acquireVariableFromExtensions(TString *stringID, lua_Scope *T) {
+    //Returns a int8 which should decide which memmap we must use
+    //The int64 is the offset
+    /*
+     * 0: Script Local Map
+     * 1: 'this' Function map
+     * 2: Upper Function map
+     */
+    uint8_t mapid = 0x01;
+    bool _on_final_scope = false;
+    lua_Scope *actual = T;
+    bool _reached_limit = false;
+    
+    while (true) {
+        if (actual->symbols.find(std::string(stringID->data, stringID->len)) != actual->symbols.end()) {
+            return actual->symbols.find(std::string(stringID->data, stringID->len))->second;
+        } else {
+            if (actual->rSCOPE != nullptr) {
+                actual = actual->rSCOPE;
+            } else {
+                // Limit reached
+                lua_localSymbol k;
+                k.qID = 3;
+                k.slot = (uint64_t)stringID;//(uint64_t)_F_ASM_NOTGUARANTEED_GETVALUE(m_General, stringID, nullptr);
+                return k;
+            }
+        }
+    }
+}
+
+// ASM
+
+std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_Scope *scp, x86::Assembler *a, bool tb, bool f_mem, bool _Both = false);
+void _F_ASM_MultiUse_EvalUntil(std::vector<LuaLexFrame> *Keys, x86::Assembler *a, lua_Scope *AS, _Lua_Lex_Keys stop, LuaType *FINALTYPE, bool stackptrReq = false, uint64_t stacksize = 0);
+void _F_ASM_SEARCHVALUE(std::vector<LuaLexFrame> *Keys, uint32_t *pos, x86::Assembler *a, lua_Scope *AS, bool tb);
+
+void _F_ASM_CRASH(const lua_ErrSignals ERR, TString *str) {
+    m_LuaErrorHandler->reportError(ERR, 0, std::string(str->data, str->len));
+    m_LuaErrorHandler->setFatal(true);
+}
+
+LuaType __LEX_KEY_TO_LuaType(_Lua_Lex_Keys a, uint8_t ATTR) {
+    switch (a) {
+        case _L_STRING: {
+            return LuaString;
+        }
+        case _L_INT: {
+            return LuaInteger;
+        }
+        case _L_DOUBLE: {
+            return LuaNumber;
+        }
+        case _L_NUMBER: {
+            if (ATTR) {
+                return LuaNumber;
+            } else {
+                return LuaInteger;
+            }
+        }
+        case _L_BOOL: {
+            return LuaBoolean;
+        }
+        case _L_FALSE: {
+            return LuaBoolean;
+        }
+        case _L_TRUE: {
+            return LuaBoolean;
+        }
+        case _L_NONE: {
+            return LuaUnknown;
+        }
+        default: {
+            m_LuaErrorHandler->reportError(_lua_es_UnknownErr, 0, std::string("Something happened but CLua can't explain."));
+        }
+    }
+    return LuaUnknown;
+}
+
+void sss(uint64_t a) {
+    std::cout << std::hex << a << std::endl;
+}
+
+void _F_ASM_TOOLSET_IsNumber(x86::Assembler *a, x86::Gp a0) {
+    a->mov(x86::rcx, a0);
+    a->and_(x86::rcx, NAN_MASK);
+    a->cmp(x86::rcx, NAN_MASK);
+}
+
+void _F_ASM_TOOLSET_IsVarType(x86::Assembler *a, x86::Gp a0, LuaType TYP) {
+    if (x86::rcx != a0)
+        a->mov(x86::rcx, a0);
+    else
+        a->mov(x86::rax, a0);
+    a->shr(a0, 48);
+    a->and_(a0, 0xF);
+    a->cmp(a0, TYP);
+}
+
+void _F_ASM_MAKEFUNCTIONARGUMENTS(lua_Expression *Args, x86::Assembler *a, lua_Scope *AS, bool give_stackptr, uint32_t stackptrsize) {
+    size_t s = Args->size();
+    if (s == 0) {
+        /*a->mov(x86::rdi, 8);
+        a->call((uint64_t)malloc);
+        a->xor_(x86::rdx, x86::rdx);
+        a->mov(x86::qword_ptr(x86::rax), x86::rdx);*/
+        //Give no obj.
+        return;
+    }
+    
+    std::vector<x86::Gp> organs{x86::rdi, x86::rsi};
+    
+    uint64_t *_memSlot0 = new uint64_t(0);
+    uint64_t *_memSlot1 = new uint64_t(0);
+    
+    uint8_t counter = 0;
+    bool use_stack = false;
+    int16_t stackcounter = 0;
+    int16_t stackbase = -128;
+    for (std::vector<LuaLexFrame> &A: *Args) {
+        if (!use_stack) {
+            x86::Gp to_use;
+            try {
+                to_use = organs.at(counter);
+            } catch (std::out_of_range &e) {
+                // use stack
+                // Save rdi and rsi registers
+                a->mov(x86::rdx, (uint64_t)_memSlot0);
+                a->mov(x86::qword_ptr(x86::rdx), x86::rdi);
+                a->mov(x86::rdx, (uint64_t)_memSlot1);
+                a->mov(x86::qword_ptr(x86::rdx), x86::rsi);
+                use_stack = true;
+                goto _stackusage;
+            }
+            counter++;
+            // Use this register.
+            //_F_ASM_MultiUse_EvalUntil(&A, a, AS, _L_NONE, &_a_); // Has RDI
+            x86::Gp rUse = CLUA_EvalExprNReturn(&A, AS, std::pair<bool, x86::Gp>(true, to_use), false);
+            _ASM__movToReg(to_use, rUse);
+            
+            if (to_use == x86::rdi) {
+                lua_Registers.at(REG_RDI).cntId = _R_FUNC_ARGS;
+            } else if (to_use == x86::rsi) {
+                lua_Registers.at(REG_RSI).cntId = _R_FUNC_ARGS;
+            }
+            
+            continue;
+        }
+        _stackusage:
+        // rdi and rsi should not be occupied. So we will save them
+        LuaType _a_ = LuaUnknown;
+        //_F_ASM_MultiUse_EvalUntil(&A, a, AS, _L_SEPARATOR, &_a_);
+        x86::Gp rUse = CLUA_EvalExprNReturn(&A, AS, std::pair<bool, x86::Gp>(true, x86::rax), false);
+        a->mov(x86::qword_ptr(x86::rbp, stackbase-stackcounter), rUse);
+        stackcounter -= 8;
+    }
+    if (use_stack) {
+        // rdx is the third argument, so lets use it
+        /*a->lea(x86::rdx, x86::qword_ptr(x86::rbp, stackbase));
+        a->mov(x86::rcx, (uint64_t)_memSlot0);
+        a->mov(x86::rdi, x86::qword_ptr(x86::rcx));
+        a->mov(x86::rcx, (uint64_t)_memSlot1);
+        a->mov(x86::rsi, x86::qword_ptr(x86::rcx));*/
+        // Restore some registers if theyre pushed away.
+    }
+    // Uhhuh.
+    if (lua_Registers.at(REG_RDI).cntId != _R_FUNC_ARGS) {
+        // Restore key.
+        _ASM__keyInstRestoreVar(x86::rdi);
+        
+    }
+    if (lua_Registers.at(REG_RSI).cntId != _R_FUNC_ARGS && (Args->size() > 1)) {
+        _ASM__keyInstRestoreVar(x86::rsi);
+    }
+}
+
+// IGNORABLE!
+//BEGIN UNUSEFUL FUNC
+void _F_ASM_MultiUse_EvalUntil(std::vector<LuaLexFrame> *Keys, x86::Assembler *a, lua_Scope *AS, _Lua_Lex_Keys stop, LuaType *FINALTYPE, bool stackptrReq, uint64_t stacksize) {
+    LuaLexFrame f;
+    std::cout << "DUMPED INFO ABOUT KEYS: " <<dumpInfoo(*Keys) << std::endl;
+    bool _gotVar = false;
+    uint32_t pos = 0;
+    bool _isNumber = false;
+    bool _FuncCalled = false;
+    bool _concat = false;
+    bool _insertedNumisFloatingP = false;
+    _Lua_Lex_Keys _MATHOP = _L_NONE;
+    _Lua_Lex_Keys _LOGICALOP = _L_NONE;
+    bool _noneedtoCheck = false;
+    uint64_t *_PT0 = new uint64_t();
+    uint64_t *_PT1 = new uint64_t();
+    uint64_t *_PT2 = new uint64_t();
+    uint64_t *_PT3 = new uint64_t();
+    uint64_t *_PT4 = new uint64_t();
+    std::pair<bool, bool> _numCache;
+    while (true) {
+        try {
+            f = Keys->at(pos);
+        } catch (std::out_of_range &e) {
+            return;
+        }
+        if (f.key == stop) {
+            return;
+        }
+        switch (f.key) {
+            case _L_CALL: {
+                // Save math/string operators data
+                a->mov(x86::rdx, (uint64_t)_PT3);
+                a->mov(x86::qword_ptr(x86::rdx), x86::rdi); // Maybe thrash data but idc
+                // Heh..
+                if (f.ATTRIB) {
+                    // Expression ahead.
+                    LuaType typo = LuaUnknown;
+                    _F_ASM_MultiUse_EvalUntil(&f.EXPR_BRKT, a, AS, _L_SEPARATOR, &typo);
+                    if (typo == LuaUnknown || typo == LuaFunction) {
+                        // Rules: put function on rdx
+                        if (typo == LuaUnknown) {
+                            Label _instFunc = a->new_label();
+                            Label _aux = a->new_label();
+                            _F_ASM_TOOLSET_IsVarType(a, x86::rdi, LuaFunction);
+                            a->jne(_instFunc);
+                            // It is a function, proceed execution.
+                            // Save this func addr
+                            a->mov(x86::rdx, (uint64_t)_PT4);
+                            a->mov(x86::qword_ptr(x86::rdx), x86::rcx);
+                            // Make arguments for this.
+                            _F_ASM_MAKEFUNCTIONARGUMENTS(&f.EXPR, a, AS, false, 0);
+                            // Paired, now execution.
+                            a->mov(x86::rcx, (uint64_t)_PT4);
+                            a->mov(x86::rax, x86::qword_ptr(x86::rcx));
+                            a->movabs(x86::r8, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                            a->and_(x86::rcx, x86::r8); // AND THE RESULT OF THE ACQUIRED FUNCTION.
+                            a->call(x86::rcx);
+                            a->mov(x86::rdi, x86::rax);
+                            a->jmp(_aux);
+                            a->bind(_instFunc);
+                            // Crash
+                            a->ret();
+                            a->bind(_aux);
+                        } else {
+                            // No need to verify/check this.
+                            a->mov(x86::rdx, (uint64_t)_PT4);
+                            a->mov(x86::qword_ptr(x86::rdx), x86::rdi);
+                            _F_ASM_MAKEFUNCTIONARGUMENTS(&f.EXPR, a, AS, stackptrReq, stacksize);
+                            a->mov(x86::rcx, (uint64_t)_PT4);
+                            a->call(x86::qword_ptr(x86::rcx));
+                            a->mov(x86::rdi, x86::rax);
+                        }
+                    } else {
+                        // Crash
+                    }
+                } else {
+                    // Common path.
+                    uint32_t o =0;
+                    _F_ASM_SEARCHVALUE(f.addr->getData(), &o, a, AS, false);
+                    // Function arguments varies. so its like this:
+                    // RDI, RSI, RDX::PTR to more arguments on stack
+                    a->mov(x86::rcx, (uint64_t)_PT2);
+                    Label _notfunc = a->new_label();
+                    a->mov(x86::qword_ptr(x86::rcx), x86::rdi);
+                    _F_ASM_TOOLSET_IsVarType(a, x86::rdi, LuaFunction);
+                    a->je(_notfunc);
+                    // crash;
+                    a->ret();
+                    a->bind(_notfunc);
+                    _F_ASM_MAKEFUNCTIONARGUMENTS(&f.EXPR, a, AS, stackptrReq, stacksize);
+                    a->mov(x86::rcx, (uint64_t)_PT2);
+                    a->mov(x86::r8, x86::qword_ptr(x86::rcx));
+                    a->movabs(x86::r9, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                    a->and_(x86::r8, x86::r9);
+                    a->call(x86::r8);
+                }
+                a->mov(x86::rdi, x86::rax);
+                *FINALTYPE = LuaUnknown;
+                break;
+            }
+            case _L_PATH: {
+                uint32_t o = 0;
+                bool _____0 = false;
+                if (pos > 0) {
+                    a->mov(x86::rdx, (uint64_t)_PT1);
+                    a->mov(x86::qword_ptr(x86::rdx), x86::rdi);
+                }
+                std::cout << "Searching value for: " << f.addr->getHeaderVarString() << std::endl;
+                _F_ASM_SEARCHVALUE(f.addr->getData(), &o, a, AS, false);
+                std::cout << "Their type: " << std::to_string(f.addr->getHeader()->subkey) << std::endl;
+                LuaType gotTypeLast = *FINALTYPE;
+                if (f.subkey != _L_NONE) {
+                    // Predefined key. Yay!
+                    *FINALTYPE = __LEX_KEY_TO_LuaType(f.subkey, 1);
+                    _noneedtoCheck = true;
+                    if (*FINALTYPE == LuaNumber) {
+                        if (!_isNumber) {
+                            a->movq(x86::xmm0, x86::rdi);
+                            _isNumber = true;
+                            _____0 = true;
+                        }
+                    }
+                }
+                _gotVar = true;
+                if (_concat) {
+                    if (*FINALTYPE != LuaString && *FINALTYPE != LuaUnknown) {
+                        // Crash
+                    }
+                    a->mov(x86::rdx, (uint64_t)_PT0);
+                    a->mov(x86::rsi, x86::rax);
+                    a->mov(x86::rdi, x86::qword_ptr(x86::rdx));
+                    a->call((uint64_t)__ASM_F_STRINGMANIPULATOR_CONCAT);
+                    _concat = false;
+                    a->mov(x86::rdi, x86::rax);
+                    a->mov(x86::rsi, LuaString);
+                    a->call((uint64_t)__ASM_F_MAKEVAR);
+                    *FINALTYPE = LuaString;
+                    break;
+                }
+                //*FINALTYPE = LuaUnknown;
+                if (_MATHOP != _L_NONE) { //theres data on xmm0
+                    if (_____0)
+                        break;
+                    if (_noneedtoCheck) {
+                        if (*FINALTYPE != LuaNumber && *FINALTYPE != LuaInteger) {
+                            // Crash: Variable  is not a number nor integer
+                        } else {
+                            if (*FINALTYPE == LuaNumber) {
+                                // Floating point.
+                                // On RDI should be the number
+                                if (gotTypeLast == LuaNumber) { // RDI
+                                    // rdi has the second argument, we need to proc the first arg
+                                    a->mov(x86::rsi, (uint64_t)_PT1);
+                                    a->movq(x86::xmm0, x86::qword_ptr(x86::rsi));
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    switch (_MATHOP) {
+                                        case _L_SYNTAX_DEC: {
+                                            a->subsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_SUM: {
+                                            a->addsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_MUL: {
+                                            a->mulsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_DIV: {
+                                            a->divsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        default: {
+                                            //Broken.
+                                            break;
+                                        }
+                                    }
+                                    a->movq(x86::rdi, x86::xmm0);
+                                    *FINALTYPE = LuaNumber;
+                                    break;
+                                } else { // Transform to floating point. RDI
+                                    a->mov(x86::rsi, (uint64_t)_PT1);
+                                    a->movq(x86::xmm0, x86::qword_ptr(x86::rsi));
+                                    a->cvtsi2sd(x86::xmm1, x86::rdi);
+                                    switch (_MATHOP) {
+                                        case _L_SYNTAX_DEC: {
+                                            a->subsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_SUM: {
+                                            a->addsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_MUL: {
+                                            a->mulsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_DIV: {
+                                            a->divsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        default: {
+                                            //Broken.
+                                            break;
+                                        }
+                                    }
+                                    a->movq(x86::rdi, x86::xmm0);
+                                    *FINALTYPE = LuaNumber;
+                                    break;
+                                }
+                            } else {
+                                // Integer.
+                                // rax is an integer, but the op side type might be LuaNumber nor LuaInt
+                                if (_insertedNumisFloatingP) {
+                                    // Convert to an float this integer (We do not want any mispresicion)
+                                    a->mov(x86::rsi, (uint64_t)_PT1);
+                                    a->movq(x86::xmm0, x86::qword_ptr(x86::rsi));
+                                    a->cvtsi2sd(x86::xmm1, x86::rax);
+                                    switch (_MATHOP) {
+                                        case _L_SYNTAX_DEC: {
+                                            a->subsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_SUM: {
+                                            a->addsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_MUL: {
+                                            a->mulsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_DIV: {
+                                            a->divsd(x86::xmm0, x86::xmm1);
+                                            break;
+                                        }
+                                        default: {
+                                            //Broken.
+                                            break;
+                                        }
+                                    }
+                                    a->movq(x86::rdi, x86::xmm0);
+                                    *FINALTYPE = LuaNumber;
+                                } else {
+                                    // Classical arithmetic.
+                                    // rdi has int0 and rax has int1
+                                    a->mov(x86::rdx, (uint64_t)_PT1);
+                                    a->mov(x86::rax, x86::qword_ptr(x86::rdx));
+                                    switch (_MATHOP) {
+                                        case _L_SYNTAX_DEC: {
+                                            a->sub(x86::rax, x86::rdi);
+                                            break;
+                                        }
+                                        case _L_SYNTAX_DIV: {
+                                            a->div(x86::rdi);
+                                        }
+                                        case _L_SYNTAX_MUL: {
+                                            a->mul(x86::rdi);
+                                        }
+                                        case _L_SYNTAX_SUM: {
+                                            a->add(x86::rax, x86::rdi);
+                                        }
+                                        default: {
+                                            //Broken.
+                                            break;
+                                        }
+                                    }
+                                    a->mov(x86::rdi, x86::rax);
+                                    *FINALTYPE = LuaInteger;
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        // Needs to check rdi, as it arent LuaNumber nor LuaInteger
+                        Label _notAnDouble = a->new_label();
+                        Label _notAnInteger = a->new_label();
+                        //Acquire the lost var
+                        _F_ASM_TOOLSET_IsNumber(a, x86::rdi);
+                        a->je(_notAnDouble);
+                        ///It is a double
+                        if (gotTypeLast == LuaNumber) {
+                            // Do SSE arithmetic
+                            a->movq(x86::xmm1, x86::rdi);
+                            a->mov(x86::rsi, (uint64_t)_PT1);
+                            a->movq(x86::xmm0, x86::qword_ptr(x86::rsi));
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->subsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->addsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mulsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->divsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->movq(x86::rdi, x86::xmm0);
+                            *FINALTYPE = LuaNumber;
+                        } else if (gotTypeLast == LuaInteger) {
+                            a->mov(x86::rdx, (uint64_t)_PT1);
+                            a->mov(x86::rax, x86::qword_ptr(x86::rdx));
+                            // Classic arithmetic
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->sub(x86::rax, x86::rdi);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->div(x86::rdi);
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mul(x86::rdi);
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->add(x86::rax, x86::rdi);
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->mov(x86::rdi, x86::rax);
+                            *FINALTYPE = LuaInteger;
+                        } else if (gotTypeLast == LuaUnknown) {
+                            // Get variable type and proc it
+                            a->mov(x86::rdx, (uint64_t)_PT1);
+                            a->mov(x86::r9, x86::qword_ptr(x86::rdx));
+                            _F_ASM_TOOLSET_IsNumber(a, x86::r9);
+                            Label _notNumber = a->new_label();
+                            a->je(_notNumber);
+                            
+                            // Is a number.
+                            a->movq(x86::xmm0, x86::r9);
+                            a->movq(x86::xmm1, x86::rdi);
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->subsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->addsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mulsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->divsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->movq(x86::rdi, x86::xmm0);
+                            a->bind(_notNumber);
+                            _F_ASM_TOOLSET_IsVarType(a, x86::r9, LuaInteger);
+                            a->mov(x86::r9, x86::rcx);
+                            Label _notInteger = a->new_label();
+                            a->jne(_notInteger);
+                            // Is a integer.
+                            // Convert this integer to an double.
+                            a->cvtsi2sd(x86::xmm1, x86::r9);
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->subsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->addsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mulsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->divsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->movq(x86::rdi, x86::xmm0);
+                            Label _END = a->new_label();
+                            a->jmp(_END);
+                            a->bind(_notInteger);
+                            //Crash;
+                            a->ret();
+                            a->bind(_END);
+                            *FINALTYPE = LuaNumber;
+                        } else {
+                            // A type with no LuaUnknown found, crash
+                        }
+                        a->bind(_notAnDouble);
+                        _F_ASM_TOOLSET_IsVarType(a, x86::rdi, LuaInteger);
+                        a->mov(x86::rdi, x86::rcx);
+                        a->jne(_notAnInteger);
+                        //It is a integer
+                        if (gotTypeLast == LuaNumber) {
+                            // Convert the xmm1 to be rdi {For MORE precision}
+                            // the xmm0 operator has other THING.
+                            a->mov(x86::rdx, (uint64_t)_PT1);
+                            a->mov(x86::r9, x86::qword_ptr(x86::rdx));
+                            a->movq(x86::xmm0, x86::r9);
+                            a->cvtsi2sd(x86::xmm1, x86::rdi);
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->subsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->addsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mulsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->divsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->movq(x86::rdi, x86::xmm0);
+                        } else if (gotTypeLast == LuaInteger) {
+                            // Direct arithmetic operations
+                            a->mov(x86::rdx, (uint64_t)_PT1);
+                            a->mov(x86::rax, x86::qword_ptr(x86::rdx));
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->sub(x86::rax, x86::rdi);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->div(x86::rdi);
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mul(x86::rdi);
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->add(x86::rax, x86::rdi);
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->mov(x86::rdi, x86::rax);
+                        } else if (gotTypeLast == LuaUnknown) {
+                            // Extract info from the last operator as it is their type and data
+                            a->mov(x86::rdx, (uint64_t)_PT1);
+                            a->mov(x86::rax, x86::qword_ptr(x86::rdx));
+                            // Check rax status
+                            Label _notNum = a->new_label();
+                            _F_ASM_TOOLSET_IsNumber(a, x86::rax);
+                            a->mov(x86::rdx, x86::rax);
+                            a->je(_notNum);
+                            // Is a number. Proceed.
+                            a->movq(x86::xmm0, x86::rdx);
+                            a->movq(x86::xmm1, x86::rdi);
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->subsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->addsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mulsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->divsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->movq(x86::rdi, x86::xmm0);
+                            a->bind(_notNum);
+                            // Check if it are an integer.
+                            // on rcx
+                            Label _NOTINGEGER = a->new_label();
+                            Label ___END = a->new_label();
+                            _F_ASM_TOOLSET_IsVarType(a, x86::rcx, LuaInteger);
+                            a->jne(_NOTINGEGER);
+                            // It is a integer
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->sub(x86::rax, x86::rdi);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->div(x86::rdi);
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mul(x86::rdi);
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->add(x86::rax, x86::rdi);
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->mov(x86::rdi, x86::rax);
+                            a->jmp(___END);
+                            a->bind(_NOTINGEGER);
+                            //Crash
+                            a->ret();
+                            a->bind(___END);
+                        } else {
+                            // Crash
+                        }
+                        Label _END = a->new_label();
+                        a->jmp(_END);
+                        a->bind(_notAnInteger);
+                        //Crash
+                        a->mov(x86::rax, 0);
+                        a->ret();
+                        a->bind(_END);
+                    }
+                    _MATHOP = _L_NONE;
+                    break;
+                }
+                if (_LOGICALOP != _L_NONE) {
+                    //Bring used value
+                    a->mov(x86::rsi, (uint64_t)_PT1);
+                    a->mov(x86::rdx, x86::qword_ptr(x86::rsi));
+                    //xmm0 register is occupied
+                    switch (_LOGICALOP) {
+                        case _L_AND: {
+                            /*         _____
+                             *  RDI --|     |
+                             *        | AND #-- RCX
+                             *  RAX --|_____|
+                             */
+                            //Chaining context
+                            Label _CMP_0 = a->new_label();
+                            a->test(x86::rdx, x86::rdi);
+                            a->jnz(_CMP_0);
+                            a->xor_(x86::rdi, x86::rdi);
+                            a->bind(_CMP_0);
+                            //rdi remains untouched if the test is correct.
+                            break;
+                        }
+                        case _L_OR: {
+                            /*         ______
+                             *  RDI --|      |
+                             *        |  OR  #-- RCX
+                             *  RAX --|______|
+                             */
+                            Label _Z = a->new_label();
+                            a->test(x86::rdx, x86::rdx);
+                            a->jz(_Z);
+                            a->mov(x86::rdi, x86::rdx);
+                            a->bind(_Z);
+                            *FINALTYPE = LuaUnknown;
+                            break;
+                        }
+                        case _L_EQUALS: {
+                            a->xor_(x86::rdi, x86::rdi);
+                            a->cmp(x86::rdi, x86::rdx);
+                            a->setz(x86::di);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                        case _L_DOESNT_EQUALS: {
+                            a->cmp(x86::rdi, x86::rdx);
+                            a->setz(x86::di);
+                            a->not_(x86::di);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                        // NUMBER
+                        case _L_EQUALS_OR_MINUS: { // NUMBER COMPARE
+                            // Let's see if they equals.
+                            Label _EQUALS = a->new_label();
+                            a->cmp(x86::rdx, x86::rdi);
+                            a->cmovle(x86::r9, x86::rdi);
+                            a->je(_EQUALS);
+                            // rdi has arg1 and rdx has the arg0
+                            if (*FINALTYPE == LuaInteger) {
+                                if (gotTypeLast == LuaInteger) {
+                                    Label _TRUE = a->new_label();
+                                    a->cmp(x86::rdx, x86::rdi);
+                                    a->je(_EQUALS);
+                                    a->jc(_TRUE);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->bind(_TRUE);
+                                    a->jmp(_EQUALS);
+                                } else if (gotTypeLast == LuaNumber) {
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->cvtsi2sd(x86::xmm1, x86::rdi); 
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (gotTypeLast == LuaUnknown) {
+                                    // HELL
+                                    Label _notNumber = a->new_label();
+                                    Label _notInteger = a->new_label();
+                                    _F_ASM_TOOLSET_IsNumber(a, x86::rdx); // rcx are modified.
+                                    a->je(_notNumber);
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_notNumber);
+                                    _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger); // stands on rcx
+                                    a->jne(_notInteger);
+                                    a->mov(x86::rdi, x86::r9);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_notInteger);
+                                    // Crash
+                                    a->ret();
+                                }
+                            } else if (*FINALTYPE == LuaNumber) {
+                                if (gotTypeLast == LuaNumber) {
+                                    //Compare both.
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (gotTypeLast == LuaInteger) {
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->cvtsi2sd(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (gotTypeLast == LuaUnknown) {
+                                    Label _NN = a->new_label();
+                                    Label _NI = a->new_label();
+                                    _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                    a->je(_NN);
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_NN);
+                                    _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                    a->jne(_NI);
+                                    a->cvtsi2sd(x86::xmm0, x86::rcx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_NI);
+                                    //CRASH
+                                    a->ret();
+                                }
+                            } else if (*FINALTYPE == LuaUnknown) { // This should be illegal.
+                                // Okay... I hate this two numbers type.
+                                Label _0_NotNumber = a->new_label();
+                                Label _0_NotInteger = a->new_label();
+                                Label _NOTNUMBER = a->new_label();
+                                Label _NOTINTEGER = a->new_label();
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdi);
+                                a->je(_NOTNUMBER);
+                                a->movq(x86::xmm1, x86::rdi);
+                                Label _transformed = a->new_label();
+                                Label _transformToNandMOV = a->new_label();
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                a->je(_transformToNandMOV);
+                                // Transform RDX to a NUMBER
+                                a->movq(x86::xmm0, x86::rdx);
+                                a->bind(_transformed);
+                                //Already moved RDX
+                                // COMPARATION.
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->comisd(x86::xmm0, x86::xmm1);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_transformToNandMOV);
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                a->jne(_NOTINTEGER);
+                                a->cvtsi2sd(x86::xmm0, x86::rcx);
+                                a->jmp(_transformed);
+                                a->bind(_NOTNUMBER);
+                                // INT
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdi, LuaInteger);
+                                a->jne(_0_NotInteger);
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                a->je(_0_NotNumber);
+                                a->cvtsi2sd(x86::xmm1, x86::rdi);
+                                a->movq(x86::xmm0, x86::rdx);
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->comisd(x86::xmm0, x86::xmm1);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_0_NotNumber);
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                a->jne(_NOTINTEGER);
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->cmp(x86::rcx, x86::rdi);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_0_NotInteger);
+                                a->bind(_NOTINTEGER);
+                                //CRASH
+                                a->ret();
+                            }
+                            a->bind(_EQUALS);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                        case _L_EQUALS_OR_MORE: {
+                            // Let's see if they equals.
+                            Label _EQUALS = a->new_label();
+                            a->cmp(x86::rdx, x86::rdi);
+                            a->cmovle(x86::r9, x86::rdi);
+                            a->je(_EQUALS);
+                            // rdi has arg1 and rdx has the arg0
+                            if (*FINALTYPE == LuaInteger) {
+                                if (gotTypeLast == LuaInteger) {
+                                    Label _TRUE = a->new_label();
+                                    a->cmp(x86::rdx, x86::rdi);
+                                    a->je(_EQUALS);
+                                    a->jc(_TRUE);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->bind(_TRUE);
+                                    a->jmp(_EQUALS);
+                                } else if (gotTypeLast == LuaNumber) {
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->cvtsi2sd(x86::xmm1, x86::rdi); 
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (gotTypeLast == LuaUnknown) {
+                                    // HELL
+                                    Label _notNumber = a->new_label();
+                                    Label _notInteger = a->new_label();
+                                    _F_ASM_TOOLSET_IsNumber(a, x86::rdx); // rcx are modified.
+                                    a->je(_notNumber);
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_notNumber);
+                                    _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger); // stands on rcx
+                                    a->jne(_notInteger);
+                                    a->mov(x86::rdi, x86::r9);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_notInteger);
+                                    // Crash
+                                    a->ret();
+                                }
+                            } else if (*FINALTYPE == LuaNumber) {
+                                if (gotTypeLast == LuaNumber) {
+                                    //Compare both.
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (gotTypeLast == LuaInteger) {
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->cvtsi2sd(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (gotTypeLast == LuaUnknown) {
+                                    Label _NN = a->new_label();
+                                    Label _NI = a->new_label();
+                                    _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                    a->je(_NN);
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_NN);
+                                    _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                    a->jne(_NI);
+                                    a->cvtsi2sd(x86::xmm0, x86::rcx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_NI);
+                                    //CRASH
+                                    a->ret();
+                                }
+                            } else if (*FINALTYPE == LuaUnknown) { // This should be illegal.
+                                // Okay... I hate this two numbers type.
+                                Label _0_NotNumber = a->new_label();
+                                Label _0_NotInteger = a->new_label();
+                                Label _NOTNUMBER = a->new_label();
+                                Label _NOTINTEGER = a->new_label();
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdi);
+                                a->je(_NOTNUMBER);
+                                a->movq(x86::xmm1, x86::rdi);
+                                Label _transformed = a->new_label();
+                                Label _transformToNandMOV = a->new_label();
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                a->je(_transformToNandMOV);
+                                // Transform RDX to a NUMBER
+                                a->movq(x86::xmm0, x86::rdx);
+                                a->bind(_transformed);
+                                //Already moved RDX
+                                // COMPARATION.
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->comisd(x86::xmm0, x86::xmm1);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_transformToNandMOV);
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                a->jne(_NOTINTEGER);
+                                a->cvtsi2sd(x86::xmm0, x86::rcx);
+                                a->jmp(_transformed);
+                                a->bind(_NOTNUMBER);
+                                // INT
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdi, LuaInteger);
+                                a->jne(_0_NotInteger);
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                a->je(_0_NotNumber);
+                                a->cvtsi2sd(x86::xmm1, x86::rdi);
+                                a->movq(x86::xmm0, x86::rdx);
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->comisd(x86::xmm0, x86::xmm1);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_0_NotNumber);
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                a->jne(_NOTINTEGER);
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->cmp(x86::rcx, x86::rdi);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_0_NotInteger);
+                                a->bind(_NOTINTEGER);
+                                //CRASH
+                                a->ret();
+                            }
+                            a->bind(_EQUALS);
+                            // Twist rdi
+                            a->not_(x86::rdi);
+                            a->bind(_EQUALS);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                    }
+                    _LOGICALOP = _L_NONE;
+                }
+                break;
+            }
+            //BEGIN Function
+            
+            //END Function
+            //BEGIN LOGICAL
+            case _L_AND: {
+                a->mov(x86::rcx, (uint64_t)_PT1);
+                a->mov(x86::qword_ptr(x86::rcx), x86::rdi);
+                _LOGICALOP = f.key;
+                break;
+            }
+            case _L_OR: {
+                a->mov(x86::rcx, (uint64_t)_PT1);
+                a->mov(x86::qword_ptr(x86::rcx), x86::rdi);
+                _LOGICALOP = f.key;
+                break;
+            }
+            case _L_EQUALS: {
+                a->mov(x86::rcx, (uint64_t)_PT1);
+                a->mov(x86::qword_ptr(x86::rcx), x86::rdi);
+                _LOGICALOP = f.key;
+                break;
+            }
+            case _L_EQUALS_OR_MINUS: {
+                a->mov(x86::rcx, (uint64_t)_PT1);
+                a->mov(x86::qword_ptr(x86::rcx), x86::rdi);
+                _LOGICALOP = f.key;
+                break;
+            }
+            case _L_EQUALS_OR_MORE: {
+                a->mov(x86::rcx, (uint64_t)_PT1);
+                a->mov(x86::qword_ptr(x86::rcx), x86::rdi);
+                _LOGICALOP = f.key;
+                break;
+            }
+            case _L_DOESNT_EQUALS: {
+                a->mov(x86::rcx, (uint64_t)_PT1);
+                a->mov(x86::qword_ptr(x86::rcx), x86::rdi);
+                _LOGICALOP = f.key;
+                break;
+            }
+            //END LOGICAL
+            //BEGIN Arithmetic
+            case _L_NUMBER: {
+                std::string sn = std::string(f._data.begin(), f._data.end());
+                LuaType _lastType = *FINALTYPE;
+                
+                // Save the number for later usage.
+                if (pos > 0)
+                    a->mov(x86::r9, x86::rdi);
+                
+                if (!f.ATTRIB) {
+                    //Dot not found, classinumber
+                    a->movabs(x86::rdi, (0x7FF8000000000000ULL)+(uint64_t(std::stoi(sn))));
+                    //a->xor_(x86::rdx, x86::rdx);
+                    //a->inc(x86::rdx);
+                    *FINALTYPE = LuaInteger;
+                } else {
+                    *FINALTYPE = LuaNumber;
+                    // Store the number
+                    double k = std::stod(sn);
+                    uint64_t dat;
+                    memcpy(&dat, &k, 8);
+                    a->movabs(x86::rdi, dat);
+                    a->movq(_isNumber ? x86::xmm1 : x86::xmm0, x86::rdi);
+                }
+                
+                if (_MATHOP == _L_NONE)
+                    goto _LOGICALMATH;
+                
+                // Transform rdi if needed.
+                if (!_isNumber) {
+                    // the last variable must move
+                    if (_gotVar) {
+                        Label _0_0_0 = a->new_label();
+                        Label _0_0_1 = a->new_label();
+                        a->mov(x86::rcx, x86::rdi);
+                        a->and_(x86::rdi, 0x7FF0000000000000ULL);
+                        a->cmp(x86::rdi, 0x7FF0000000000000ULL);
+                        a->jne(_0_0_0);
+                        a->mov(x86::rdi, x86::rcx);
+                        a->shr(x86::rdi, 48);
+                        a->and_(x86::rdi, 0xF);
+                        a->cmp(x86::rdi, LuaNumber);
+                        a->mov(x86::r9, x86::rcx);
+                        // AND the NUMBER.
+                        a->mov(x86::r10, 0x0000FFFFFFFFFFFFULL);
+                        a->and_(x86::r9, x86::r10);
+                        a->je(_0_0_1);
+                        //Crash: Not a number.
+                        a->bind(_0_0_0);
+                        // Proceed.
+                        a->movq(x86::xmm1, x86::rcx);
+                        _isNumber = true;
+                        a->bind(_0_0_1);
+                    } else {
+                        //Crash: Invalid type or invalid syntax
+                    }
+                }
+                
+                // At operations.
+                a->mov(x86::r10, 0x0000FFFFFFFFFFFFULL);
+                a->and_(x86::rdi, x86::r10);
+                if (*FINALTYPE == LuaInteger) {
+                    if (_isNumber) {
+                        if (_lastType == LuaNumber) {
+                            // Transform rdi to xmm1 with class.
+                            a->movq(x86::xmm0, x86::r9);
+                            a->cvtsi2sd(x86::xmm1, x86::rdi);
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->subsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->addsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mulsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->divsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->movq(x86::rdi, x86::xmm0);
+                            *FINALTYPE = LuaNumber;
+                        } else if (_lastType == LuaInteger) {
+                            // Arithmetic with integers, classical.
+                            // rdi has the number to operation and r9 the other num
+                            a->mov(x86::rax, x86::r9);
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->sub(x86::rax, x86::rdi);
+                                    break;
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->add(x86::rax, x86::rdi);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->div(x86::rdi);
+                                    break;
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mul(x86::rdi);
+                                    break;
+                                }
+                                default: { break; }
+                            }
+                            a->mov(x86::rdi, x86::rax);
+                            a->mov(x86::r10, 0x7FF8000000000000ULL);
+                            a->or_(x86::r10, x86::rdi);
+                            a->mov(x86::rdi, x86::r10);
+                        } else if (_lastType == LuaUnknown) {
+                            // Get their type. And later their data.
+                            // rdi has data.
+                            Label _notNumber = a->new_label();
+                            Label _notInteger = a->new_label();
+                            a->mov(x86::rcx, x86::rdi);
+                            _F_ASM_TOOLSET_IsNumber(a, x86::rcx);
+                            a->je(_notNumber);
+                            // It is a number. then...
+                            a->movq(x86::xmm0, x86::r9);
+                            a->cvtsi2sd(x86::xmm1, x86::rdi);
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->subsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->addsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mulsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->divsd(x86::xmm0, x86::xmm1);
+                                    break;
+                                }
+                                default: {
+                                    //Broken.
+                                    break;
+                                }
+                            }
+                            a->bind(_notNumber);
+                            _F_ASM_TOOLSET_IsVarType(a, x86::r9, LuaInteger); // unmodified num at rcx
+                            a->jne(_notInteger);
+                            // It is a integer
+                            a->mov(x86::rax, x86::rcx);
+                            switch (_MATHOP) {
+                                case _L_SYNTAX_DEC: {
+                                    a->sub(x86::rax, x86::rdi);
+                                    break;
+                                }
+                                case _L_SYNTAX_SUM: {
+                                    a->add(x86::rax, x86::rdi);
+                                    break;
+                                }
+                                case _L_SYNTAX_DIV: {
+                                    a->div(x86::rdi);
+                                    break;
+                                }
+                                case _L_SYNTAX_MUL: {
+                                    a->mul(x86::rdi);
+                                    break;
+                                }
+                                default: { break; }
+                            }
+                            a->mov(x86::rdi, x86::rax);
+                            a->mov(x86::r10, 0x7FF8000000000000ULL);
+                            a->or_(x86::r10, x86::rdi);
+                            a->mov(x86::rdi, x86::r10);
+                            *FINALTYPE = LuaInteger;
+                        }
+                    } else {
+                        // Nothing.
+                    }
+                    _isNumber = false;
+                    _MATHOP = _L_NONE;
+                    break;
+                } else { // luaNumber
+                    if (_lastType == LuaNumber) {
+                        // number + number = number hehe
+                        a->movq(x86::xmm0, x86::r9);
+                        a->movq(x86::xmm1, x86::rdi);
+                        switch (_MATHOP) {
+                            case _L_SYNTAX_DEC: {
+                                a->subsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            case _L_SYNTAX_SUM: {
+                                a->addsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            case _L_SYNTAX_MUL: {
+                                a->mulsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            case _L_SYNTAX_DIV: {
+                                a->divsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            default: {
+                                //Broken.
+                                break;
+                            }
+                        }
+                        a->movq(x86::rdi, x86::xmm0);
+                    } else if (_lastType == LuaInteger) {
+                        // Transform this.
+                        a->cvtsi2sd(x86::xmm0, x86::r9);
+                        a->movq(x86::xmm1, x86::rdi);
+                        switch (_MATHOP) {
+                            case _L_SYNTAX_DEC: {
+                                a->subsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            case _L_SYNTAX_SUM: {
+                                a->addsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            case _L_SYNTAX_MUL: {
+                                a->mulsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            case _L_SYNTAX_DIV: {
+                                a->divsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            default: {
+                                //Broken.
+                                break;
+                            }
+                        }
+                        a->movq(x86::rdi, x86::xmm0);
+                    } else if (_lastType == LuaUnknown) {
+                        //Identify the r9 type
+                        Label _Nnumber = a->new_label();
+                        Label _Ninteger = a->new_label();
+                        a->mov(x86::rcx, x86::r9);
+                        _F_ASM_TOOLSET_IsNumber(a, x86::rcx);
+                        a->je(_Nnumber);
+                        a->movq(x86::xmm0, x86::r9);
+                        a->movq(x86::xmm0, x86::rdi);
+                        switch (_MATHOP) {
+                            case _L_SYNTAX_DEC: {
+                                a->subsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            case _L_SYNTAX_SUM: {
+                                a->addsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            case _L_SYNTAX_MUL: {
+                                a->mulsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            case _L_SYNTAX_DIV: {
+                                a->divsd(x86::xmm0, x86::xmm1);
+                                break;
+                            }
+                            default: {
+                                //Broken.
+                                break;
+                            }
+                        }
+                        a->movq(x86::rdi, x86::xmm0);
+                        a->bind(_Nnumber);
+                        _F_ASM_TOOLSET_IsVarType(a, x86::r9, LuaInteger);
+                        a->jne(_Ninteger);
+                        a->mov(x86::rax, x86::rcx);
+                        switch (_MATHOP) {
+                            case _L_SYNTAX_DEC: {
+                                a->sub(x86::rax, x86::rdi);
+                                break;
+                            }
+                            case _L_SYNTAX_SUM: {
+                                a->add(x86::rax, x86::rdi);
+                                break;
+                            }
+                            case _L_SYNTAX_DIV: {
+                                a->div(x86::rdi);
+                                break;
+                            }
+                            case _L_SYNTAX_MUL: {
+                                a->mul(x86::rdi);
+                                break;
+                            }
+                            default: { break; }
+                        }
+                        a->mov(x86::rdi, x86::rax);
+                        a->mov(x86::r10, 0x7FF8000000000000ULL);
+                        a->or_(x86::r10, x86::rdi);
+                        a->mov(x86::rdi, x86::r10);
+                        a->bind(_Ninteger);
+                        //Crash
+                        a->ret();
+                    }
+                    // Make RDI be a usual variable.
+                    _isNumber = false;
+                    _MATHOP = _L_NONE;
+                    break;
+                }
+                _LOGICALMATH:
+                if (_LOGICALOP != _L_NONE) {
+                    //Bring used value
+                    a->mov(x86::rsi, (uint64_t)_PT1);
+                    a->mov(x86::rdx, x86::qword_ptr(x86::rsi));
+                    //xmm0 register is occupied
+                    switch (_LOGICALOP) {
+                        case _L_AND: {
+                            /*         _____
+                             *  RDI --|     |
+                             *        | AND #-- RCX
+                             *  RAX --|_____|
+                             */
+                            //Chaining context
+                            Label _CMP_0 = a->new_label();
+                            a->test(x86::rdx, x86::rdi);
+                            a->jnz(_CMP_0);
+                            a->xor_(x86::rdi, x86::rdi);
+                            a->bind(_CMP_0);
+                            //rax remains untouched if the test is correct.
+                            *FINALTYPE = LuaUnknown;
+                            break;
+                        }
+                        case _L_OR: {
+                            /*         ______
+                             *  RDI --|      |
+                             *        |  OR  #-- RCX
+                             *  RAX --|______|
+                             */
+                            Label _Z = a->new_label();
+                            Label _E = a->new_label();
+                            a->test(x86::rdx, x86::rdx);
+                            a->jz(_Z);
+                            a->mov(x86::rax, x86::rdx);
+                            a->bind(_Z);
+                            *FINALTYPE = LuaUnknown;
+                            break;
+                        }
+                        case _L_EQUALS: {
+                            a->xor_(x86::rdi, x86::rdi);
+                            a->cmp(x86::rdi, x86::rdx);
+                            a->setz(x86::di);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                        case _L_DOESNT_EQUALS: {
+                            a->xor_(x86::rdi, x86::rdi);
+                            a->cmp(x86::rdi, x86::rdx);
+                            a->setz(x86::di);
+                            a->not_(x86::di);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                        // NUMBER
+                        case _L_EQUALS_OR_MINUS: { // NUMBER COMPARE
+                            // Let's see if they equals.
+                            Label _EQUALS = a->new_label();
+                            a->cmp(x86::rdx, x86::rdi);
+                            a->cmovle(x86::r9, x86::rdi);
+                            a->je(_EQUALS);
+                            // rdi has arg1 and rdx has the arg0
+                            if (*FINALTYPE == LuaInteger) {
+                                if (_lastType == LuaInteger) {
+                                    Label _TRUE = a->new_label();
+                                    a->cmp(x86::rdx, x86::rdi);
+                                    a->je(_EQUALS);
+                                    a->jc(_TRUE);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->bind(_TRUE);
+                                    a->jmp(_EQUALS);
+                                } else if (_lastType == LuaNumber) {
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->cvtsi2sd(x86::xmm1, x86::rdi); 
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (_lastType == LuaUnknown) {
+                                    // HELL
+                                    Label _notNumber = a->new_label();
+                                    Label _notInteger = a->new_label();
+                                    _F_ASM_TOOLSET_IsNumber(a, x86::rdx); // rcx are modified.
+                                    a->je(_notNumber);
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_notNumber);
+                                    _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger); // stands on rcx
+                                    a->jne(_notInteger);
+                                    a->mov(x86::rdi, x86::r9);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_notInteger);
+                                    // Crash
+                                    a->ret();
+                                }
+                            } else if (*FINALTYPE == LuaNumber) {
+                                if (_lastType == LuaNumber) {
+                                    //Compare both.
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (_lastType == LuaInteger) {
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->cvtsi2sd(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (_lastType == LuaUnknown) {
+                                    Label _NN = a->new_label();
+                                    Label _NI = a->new_label();
+                                    _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                    a->je(_NN);
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_NN);
+                                    _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                    a->jne(_NI);
+                                    a->cvtsi2sd(x86::xmm0, x86::rcx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_NI);
+                                    //CRASH
+                                    a->ret();
+                                }
+                            } else if (*FINALTYPE == LuaUnknown) { // This should be illegal.
+                                // Okay... I hate this two numbers type.
+                                Label _0_NotNumber = a->new_label();
+                                Label _0_NotInteger = a->new_label();
+                                Label _NOTNUMBER = a->new_label();
+                                Label _NOTINTEGER = a->new_label();
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdi);
+                                a->je(_NOTNUMBER);
+                                a->movq(x86::xmm1, x86::rdi);
+                                Label _transformed = a->new_label();
+                                Label _transformToNandMOV = a->new_label();
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                a->je(_transformToNandMOV);
+                                // Transform RDX to a NUMBER
+                                a->movq(x86::xmm0, x86::rdx);
+                                a->bind(_transformed);
+                                //Already moved RDX
+                                // COMPARATION.
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->comisd(x86::xmm0, x86::xmm1);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_transformToNandMOV);
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                a->jne(_NOTINTEGER);
+                                a->cvtsi2sd(x86::xmm0, x86::rcx);
+                                a->jmp(_transformed);
+                                a->bind(_NOTNUMBER);
+                                // INT
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdi, LuaInteger);
+                                a->jne(_0_NotInteger);
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                a->je(_0_NotNumber);
+                                a->cvtsi2sd(x86::xmm1, x86::rdi);
+                                a->movq(x86::xmm0, x86::rdx);
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->comisd(x86::xmm0, x86::xmm1);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_0_NotNumber);
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                a->jne(_NOTINTEGER);
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->cmp(x86::rcx, x86::rdi);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_0_NotInteger);
+                                a->bind(_NOTINTEGER);
+                                //CRASH
+                                a->ret();
+                            }
+                            a->bind(_EQUALS);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                        case _L_EQUALS_OR_MORE: {
+                            Label _EQUALS = a->new_label();
+                            a->cmp(x86::rdx, x86::rdi);
+                            a->cmovle(x86::r9, x86::rdi);
+                            a->je(_EQUALS);
+                            // rdi has arg1 and rdx has the arg0
+                            if (*FINALTYPE == LuaInteger) {
+                                if (_lastType == LuaInteger) {
+                                    Label _TRUE = a->new_label();
+                                    a->cmp(x86::rdx, x86::rdi);
+                                    a->je(_EQUALS);
+                                    a->jc(_TRUE);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->bind(_TRUE);
+                                    a->jmp(_EQUALS);
+                                } else if (_lastType == LuaNumber) {
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->cvtsi2sd(x86::xmm1, x86::rdi); 
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (_lastType == LuaUnknown) {
+                                    // HELL
+                                    Label _notNumber = a->new_label();
+                                    Label _notInteger = a->new_label();
+                                    _F_ASM_TOOLSET_IsNumber(a, x86::rdx); // rcx are modified.
+                                    a->je(_notNumber);
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_notNumber);
+                                    _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger); // stands on rcx
+                                    a->jne(_notInteger);
+                                    a->mov(x86::rdi, x86::r9);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_notInteger);
+                                    // Crash
+                                    a->ret();
+                                }
+                            } else if (*FINALTYPE == LuaNumber) {
+                                if (_lastType == LuaNumber) {
+                                    //Compare both.
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (_lastType == LuaInteger) {
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->cvtsi2sd(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                } else if (_lastType == LuaUnknown) {
+                                    Label _NN = a->new_label();
+                                    Label _NI = a->new_label();
+                                    _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                    a->je(_NN);
+                                    a->movq(x86::xmm0, x86::rdx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_NN);
+                                    _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                    a->jne(_NI);
+                                    a->cvtsi2sd(x86::xmm0, x86::rcx);
+                                    a->movq(x86::xmm1, x86::rdi);
+                                    a->comisd(x86::xmm0, x86::xmm1);
+                                    a->xor_(x86::rdi, x86::rdi);
+                                    a->setc(x86::di);
+                                    a->jmp(_EQUALS);
+                                    a->bind(_NI);
+                                    //CRASH
+                                    a->ret();
+                                }
+                            } else if (*FINALTYPE == LuaUnknown) { // This should be illegal.
+                                // Okay... I hate this two numbers type.
+                                Label _0_NotNumber = a->new_label();
+                                Label _0_NotInteger = a->new_label();
+                                Label _NOTNUMBER = a->new_label();
+                                Label _NOTINTEGER = a->new_label();
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdi);
+                                a->je(_NOTNUMBER);
+                                a->movq(x86::xmm1, x86::rdi);
+                                Label _transformed = a->new_label();
+                                Label _transformToNandMOV = a->new_label();
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                a->je(_transformToNandMOV);
+                                // Transform RDX to a NUMBER
+                                a->movq(x86::xmm0, x86::rdx);
+                                a->bind(_transformed);
+                                //Already moved RDX
+                                // COMPARATION.
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->comisd(x86::xmm0, x86::xmm1);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_transformToNandMOV);
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                a->jne(_NOTINTEGER);
+                                a->cvtsi2sd(x86::xmm0, x86::rcx);
+                                a->jmp(_transformed);
+                                a->bind(_NOTNUMBER);
+                                // INT
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdi, LuaInteger);
+                                a->jne(_0_NotInteger);
+                                _F_ASM_TOOLSET_IsNumber(a, x86::rdx);
+                                a->je(_0_NotNumber);
+                                a->cvtsi2sd(x86::xmm1, x86::rdi);
+                                a->movq(x86::xmm0, x86::rdx);
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->comisd(x86::xmm0, x86::xmm1);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_0_NotNumber);
+                                _F_ASM_TOOLSET_IsVarType(a, x86::rdx, LuaInteger);
+                                a->jne(_NOTINTEGER);
+                                a->xor_(x86::rdi, x86::rdi);
+                                a->cmp(x86::rcx, x86::rdi);
+                                a->setc(x86::di);
+                                a->jmp(_EQUALS);
+                                a->bind(_0_NotInteger);
+                                a->bind(_NOTINTEGER);
+                                //CRASH
+                                a->ret();
+                            }
+                            a->bind(_EQUALS);
+                            a->not_(x86::rdi);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                    }
+                    _LOGICALOP = _L_NONE;
+                    a->movq(x86::rax, x86::xmm0);
+                }
+                break;
+            }
+            case _L_SYNTAX_DEC: {
+                /**/
+                _MATHOP = f.key;
+                break;
+            }
+            case _L_SYNTAX_SUM: {
+                _MATHOP = f.key;
+                break;
+            }
+            case _L_SYNTAX_MUL: {
+                _MATHOP = f.key;
+                break;
+            }
+            case _L_SYNTAX_DIV: {
+                _MATHOP = f.key;
+                break;
+            }
+            //END Arithmetic
+            //BEGIN BOOLS
+            case _L_TRUE: {
+                a->movabs(x86::rdi, 0x7FF3000000000001ULL);
+                break;
+            }
+            case _L_FALSE: {
+                a->movabs(x86::rdi, 0x7FF3000000000000ULL);
+                break;
+            }
+            //END BOOLS
+            //BEGIN String
+            case _L_CONCAT: {
+                if (!_noneedtoCheck) {
+                    if (*FINALTYPE == LuaUnknown) {
+                        //Values should be on rax
+                        Label ISTRING = a->new_label();
+                        a->mov(x86::r10, x86::rax);
+                        a->shr(x86::rax, 48);
+                        a->and_(x86::rax, 0xF);
+                        a->cmp(x86::rax, LuaString);
+                        a->je(ISTRING);
+                        // Crash: Not a string
+                        a->bind(ISTRING);
+                        a->mov(x86::rax, x86::r10);
+                        a->movabs(x86::rdi, 0x0000FFFFFFFFFFFFULL);
+                        a->and_(x86::rax, x86::rdi);
+                        //Got raw addr
+                        //Insert crash here
+                    } else {
+                        // No need to check
+                    }
+                }
+                _concat = true;
+                break;
+            }
+            case _L_STRING: {
+                if (!_concat) {
+                    a->mov(x86::rdi, lua_makeVar(f.a, LuaString));
+                    //_D_C_A_0 = true;
+                }
+                if (_MATHOP != _L_NONE) {
+                    //Crash: Should not do arithmetic operations with string
+                    break;
+                }
+                *FINALTYPE = LuaString;
+                /// ///
+                if (_concat) {
+                    a->mov(x86::rsi, (uint64_t)f.a);
+                    //Rax is an Values, transform.
+                    a->call((uint64_t)__ASM_F_STRINGMANIPULATOR_CONCAT);
+                    _concat = false;
+                    a->mov(x86::rdi, x86::rax);
+                    a->mov(x86::rsi, LuaString);
+                    a->call((uint64_t)__ASM_F_MAKEVAR);
+                    a->mov(x86::rdi, x86::rax);
+                    break;
+                }
+                if (_LOGICALOP != _L_NONE) {
+                    //Bring used value
+                    a->mov(x86::rsi, (uint64_t)_PT1);
+                    a->mov(x86::rdx, x86::qword_ptr(x86::rsi));
+                    //xmm0 register is occupied
+                    switch (_LOGICALOP) {
+                        case _L_AND: {
+                            /*         _____
+                             *  RDI --|     |
+                             *        | AND #-- RCX
+                             *  RAX --|_____|
+                             */
+                            //Chaining context
+                            Label _CMP_0 = a->new_label();
+                            a->test(x86::rdx, x86::rdi);
+                            a->jnz(_CMP_0);
+                            a->xor_(x86::rdi, x86::rdi);
+                            a->bind(_CMP_0);
+                            //rax remains untouched if the test is correct.
+                            *FINALTYPE = LuaUnknown;
+                            break;
+                        }
+                        case _L_OR: {
+                            /*         ______
+                             *  RDI --|      |
+                             *        |  OR  #-- RCX
+                             *  RAX --|______|
+                             */
+                            Label _Z = a->new_label();
+                            Label _E = a->new_label();
+                            a->test(x86::rdx, x86::rdx);
+                            a->jz(_Z);
+                            a->mov(x86::rdi, x86::rdx);
+                            a->bind(_Z);
+                            *FINALTYPE = LuaUnknown;
+                            break;
+                        }
+                        case _L_EQUALS: {
+                            a->xor_(x86::rdi, x86::rdi);
+                            a->cmp(x86::rdi, x86::rdx);
+                            a->setz(x86::di);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                        case _L_DOESNT_EQUALS: {
+                            a->cmp(x86::rdi, x86::rdx);
+                            a->setz(x86::di);
+                            a->not_(x86::di);
+                            *FINALTYPE = LuaBoolean;
+                            break;
+                        }
+                        // NUMBER
+                        case _L_EQUALS_OR_MINUS: { // NUMBER COMPARE
+                            //Crash: String should not be compared with number
+                            break;
+                        }
+                        case _L_EQUALS_OR_MORE: {
+                            //Crash: String should not be compared with number
+                            break;
+                        }
+                    }
+                    _LOGICALOP = _L_NONE;
+                }
+                break;
+            }
+            //END String
+            case _L_OVERALLTYPECHECKER: {
+                break;
+            }
+            default: {
+                //BREAK;
+                break;
+            }
+        }
+        pos++;
+    }
+}
+//END UNUSEFUL FUNC
+// _F_ASM_MultiUse_EvalUntil are replaced by CLUA_EvalExprNReturn
+
+// Resolves addresses like a.b.c, a.b["c"] and a.b[3 < 5 and "c"]
+void _F_ASM_SEARCHVALUE(std::vector<LuaLexFrame> *Keys, uint32_t *pos, x86::Assembler *a, lua_Scope *AS, bool tb) {
+    bool def = false;
+    bool tde = false;
+    LuaLexFrame F;
+    uint64_t *p1 = new uint64_t();
+    //rax
+    while (true) {
+        try {
+            F = Keys->at(*pos);
+        } catch (std::out_of_range &e) {
+            return;
+        }
+        switch (F.key) {
+            case _L_VARNAME: {
+                if (!def) {
+                    _F_ASM_PUTVARIABLEONTOFUNCTION_RAX((TString*)F.a, AS, a, tb && F._LK, false); // Actually this saves to rdi
+                } else {
+                    if (tde) {
+                        //Might want to save
+                        a->mov(x86::rcx, (uint64_t)p1);
+                        a->mov(x86::qword_ptr(x86::rcx), x86::rdi);
+                        a->mov(x86::rax, x86::rdi);
+                        a->mov(x86::rsi, (uint64_t)F.a);
+                        a->xor_(x86::rdx, x86::rdx);
+                        if (tb && F._LK)
+                            a->call((uint64_t)_F_ASM_NOTGUARANTEED_GETPTR);
+                        else
+                            a->call((uint64_t)_F_ASM_NOTGUARANTEED_GETVALUE);
+                        a->mov(x86::rdi, x86::rax);
+                    } else {
+                        //Crash in compilation time: Bad usage of OnToGo[->DEFINED]
+                    }
+                }
+            }
+            case _L_ON_TO_GO: {
+                if (def) {
+                    if (F.ATTRIB) {
+                        Label _DONTCRASH = a->new_label();
+                        // Save rax
+                        a->mov(x86::rcx, (uint64_t)p1);
+                        a->mov(x86::qword_ptr(x86::rcx), x86::rdi);
+                        // Eval their content
+                        LuaType c = LuaUnknown;
+                        _F_ASM_MultiUse_EvalUntil(&F.EXPR_BRKT, a, AS, _L_ON_TO_GO_END, &c);
+                        //Must check contents
+                        // L0 [Check if (rax - 1) a table]
+                        a->mov(x86::rcx, (uint64_t)p1);
+                        a->mov(x86::rdx, x86::qword_ptr(x86::rcx));
+                        a->mov(x86::rsi, x86::rdx); // Copy
+                        a->shr(x86::rsi, 48);
+                        a->and_(x86::rsi, 0xF);
+                        a->cmp(x86::rsi, LuaTable);
+                        a->je(_DONTCRASH);
+                        //Crash: Not an table.
+                        a->bind(_DONTCRASH);
+                        // L1 [Access (rax - 1)]
+                        a->mov(x86::rdi, x86::rdx); // lua_Table*
+                        switch (c) {
+                            case LuaString: {
+                                a->mov(x86::rsi, x86::rax);
+                                a->xor_(x86::rdx, x86::rdx);
+                                if (tb && F._LK)
+                                    a->call((uint64_t)_F_ASM_NOTGUARANTEED_GETPTR);
+                                else
+                                    a->call((uint64_t)_F_ASM_NOTGUARANTEED_GETVALUE);
+                                a->mov(x86::rdi, x86::rax);
+                                break;
+                            }
+                            case LuaInteger: {
+                                Label _0_0_0 = a->new_label();
+                                Label _0_0_1 = a->new_label();
+                                // number always is stored on xmm0
+                                a->cvtsd2si(x86::rax, x86::xmm0);
+                                a->xor_(x86::rdx, x86::rdx);
+                                a->add(x86::rdx, 8); //The first 8 bytes are the count.
+                                a->mov(x86::rsi, 8);
+                                a->mul(x86::rsi); // rax * 8
+                                a->add(x86::rax, x86::rsi);
+                                /// ///
+                                a->mov(x86::rcx, x86::qword_ptr(x86::rdi, 8));
+                                a->cmp(x86::rcx, x86::rax);
+                                a->ja(_0_0_0);
+                                if (tb && F._LK)
+                                    a->lea(x86::rax, x86::qword_ptr(x86::rdi));
+                                else
+                                    a->mov(x86::rax, x86::qword_ptr(x86::rdi));
+                                a->jmp(_0_0_1);
+                                a->bind(_0_0_0);
+                                //Too big for index.
+                                //Allocate
+                                a->cvtsd2si(x86::rax, x86::xmm0);
+                                a->mov(x86::rsi, x86::rax);
+                                a->xor_(x86::rdx, x86::rdx);
+                                if (tb && F._LK)
+                                    a->call((uint64_t)__ASM_F_ALLOCATEMORESPACEFORARRAYINTABLE_PTR);
+                                else
+                                    a->call((uint64_t)__ASM_F_ALLOCATEMORESPACEFORARRAYINTABLE);
+                                a->bind(_0_0_1);
+                                a->mov(x86::rdi, x86::rax);
+                                break;
+                            }
+                            case LuaUnknown: {
+                                //Classic for variables.
+                                
+                            }
+                            case LuaBoolean: {
+                                //What the actual fuck?
+                            }
+                        }   
+                    } else {
+                        // Check the current type
+                        Label _ARE_TABLE = a->new_label();
+                        a->mov(x86::r10, x86::rdi);
+                        a->shr(x86::rdi, 48);
+                        a->and_(x86::rdi, 0xF);
+                        //Now we might compare
+                        a->cmp(x86::rdi, LuaTable);
+                        a->je(_ARE_TABLE);
+                        //Crash
+                        a->bind(_ARE_TABLE);
+                        //Prepare their address
+                        a->mov(x86::rcx, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                        a->mov(x86::rdi, x86::r10);
+                        a->and_(x86::rdi, x86::rcx);
+                        tde = true;
+                    }
+                } else {
+                    //Crash in compilation time: bad usage of OnToGo[->]
+                }
+                break;
+            }
+            default: {
+                //Break and give result.
+                return;
+            }
+        }
+        *pos = *pos + 1;
+    }
+}
+
+static uint64_t PTRMASK = 0x0000FFFFFFFFFFFFULL;
+static uint64_t CNTMASK = 0xFFFF000000000000ULL;
+bool _0_0_0_CMPTIME_ASM_isScript = false;
+void *_0_0_0_CMPTIME_ASM_scriptMem = nullptr;
+
+// f_mem = force memory get/save
+// tb = save/load
+// a = Assembler
+// ID = TString
+// scp = Operating Scope
+std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_Scope *scp, x86::Assembler *a, bool tb, bool f_mem, bool _Both) {
+    lua_localSymbol var = acquireVariableFromExtensions(ID, scp);
+    x86::Gp sReg = x86::noReg;
+    if (!f_mem) { // Search from memory if false
+        if (var.cacheReg > 0) {
+            x86::Gp toReg;
+            switch (var.cacheReg) {
+                case 1: {
+                    toReg = x86::r12;
+                    break;
+                }
+                case 2: {
+                    toReg = x86::r13;
+                    break;
+                }
+                case 3: {
+                    toReg = x86::r14;
+                    break;
+                }
+                case 4: {
+                    toReg = x86::r15;
+                    break;
+                }
+            }
+            a->mov(x86::rdi, toReg);
+            return {toReg, x86::noReg};
+        }
+    }
+    switch (var.qID) {
+        case 0: { // Local map
+            //Get variable from 0
+            // Local script map
+            a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -24));
+            if (tb)
+                a->lea(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+            else
+                a->mov(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+            break;
+        }
+        case 1: { // FuncArgs*
+            //Get variable from 1
+            // Our map
+            a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -16));
+            //a->mov(x86::rax, x86::qword_ptr(x86::rsi, var.second.slot));
+            if (tb)
+                a->lea(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+            else
+                a->mov(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+            break;
+        }
+        case 2: { // rbp-512 = Locals
+            if (!_0_0_0_CMPTIME_ASM_isScript) {
+                if (var.register_ != x86::rax) {
+                    if (tb)
+                        goto _continueSadly;
+                    if (lua_Registers.at(_CPP_getRegisterFromASM(var.register_)).cntId == _R_FUNC_ARGS_ENTRY)
+                        return {var.register_, x86::noReg};
+                }
+                a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -512));
+                _continueSadly:
+                if (tb)
+                    a->lea(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+                else
+                    a->mov(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+                if (_Both)
+                    a->lea(x86::rsi, x86::qword_ptr(x86::rsi, var.slot));
+                sReg = x86::rsi;
+            } else {
+                a->movabs(x86::rsi, (uint64_t)_0_0_0_CMPTIME_ASM_scriptMem);
+                if (tb)
+                    a->lea(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+                else
+                    a->mov(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+                if (_Both)
+                    a->lea(x86::rsi, x86::qword_ptr(x86::rsi, var.slot));
+                sReg = x86::rsi;
+            }
+            break;
+        }
+        case 4: { // rsp+16 = UpFuncScope
+            //Get variable from upper func scope
+            a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -24));
+            a->mov(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+            break;
+        }
+        case 3: { // m_General
+            //Search online
+            a->mov(x86::rsi, var.slot);
+            a->mov(x86::rdi, (uint64_t)m_General);
+            a->xor_(x86::rdx, x86::rdx);
+            if (tb) 
+                a->call((uint64_t)_F_ASM_NOTGUARANTEED_GETPTR);    
+            else
+                a->call((uint64_t)_F_ASM_NOTGUARANTEED_GETVALUE);
+            a->mov(x86::rdi, x86::rax);
+            break;
+        }
+    }
+    lua_Registers.at(REG_RDI).cntId = _R_TRASHDATA;
+    lua_Registers.at(REG_RSI).cntId = _R_TRASHDATA;
+    return {x86::rdi, sReg};
+}
+
+
+//3000~
+
+
+//If found some upvalues and O == true, then make a third map and put it
+void _F_ASM_Copy64bitValue(x86::Assembler *a, uint32_t pos, void *mem) {
+    a->mov(x86::r8, (uint64_t)mem);
+    a->mov(x86::r9, x86::qword_ptr(x86::r8, pos));
+    a->mov(x86::rax, x86::r9);
+}
+//asm = ud2
+
+void lua_initializeRuntime() {
+    //rt = JitRuntime();
+}
+
+static std::string dumpInfo(std::vector<lua_biOpCode> S) {
+    std::string _s;
+    _s.append(" ");
+    for (lua_biOpCode &i: S) {
+        _s.append("$");
+        _s.append(std::to_string(static_cast<int>(i.OPCODE)));
+        //_s.append("[" + i.KEY + ";" + i.toMemOffset + "]");
+        _s.append(" ");
+    }
+    return _s;
+}
+
+uint8_t _getForTypeExpression(lua_Expression *K) {
+    /*
+     * 0 = Unknown                  !!!
+     * 1 = Number count             i = 0,2[,3]
+     * 2 = First-way iteration      a in <>
+     * 3 = Double-way iteration     a,b in <>
+     */
+    if (K->size() > 0) {
+        std::vector<LuaLexFrame> *_v0 = &K->at(0);
+        if (_v0->size() == 1) { // You cannot had a expression for 'for' like this: for a do [Be in hell.]
+            // Double way iteration.
+            return 3;
+        }
+        // Number count or First way iteration.
+        LuaLexFrame *_k0 = nullptr;
+        LuaLexFrame *_k1 = &_v0->at(1); // Must be 'in' or 'equal'
+        switch (_k1->key) {
+            case _L_IN: {
+                // First way.
+                return 2;
+            }
+            case _L_DECLR: {
+                // Number count.
+                return 1;
+            }
+            default: {
+                m_LuaErrorHandler->reportError(_lua_es_UnknownDataIdx, 0, std::string("Not known: ")+std::to_string(_k1->key));
+            }
+        }
+    }
+    return 0;
+}
+
+//NOTE: OBSOLETE
+void updateFrameGp(x86::Assembler *a, x86::Gp gp, lua_localSymbol *SM, lua_Scope *S, TString *name) {
+    //That frame should be updated with the big environment
+    SM->cacheReg = 0;
+    _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(name, S, a, true, true);
+    a->mov(x86::qword_ptr(x86::rdi), gp);
+}
+
+static bool _upperVarsNotRequiredHighRegistersSlot = true;
+
+void frontNlowerPushes(x86::Assembler *a, std::vector<lua_biOpCode> *quote, bool way) {
+    // Uh oh.
+    if (quote->at(quote->size()-4).ATR == 0) {
+        if (!way) {
+            a->pop(x86::rbx);
+        }
+        _upperVarsNotRequiredHighRegistersSlot = true;
+        return;
+    }
+    _upperVarsNotRequiredHighRegistersSlot = false;
+    if (way) {
+        a->push(x86::r12);
+        a->push(x86::r13);
+        a->push(x86::r14);
+        a->push(x86::r15);
+    } else {
+        a->pop(x86::r12);
+        a->pop(x86::r13);
+        a->pop(x86::r14);
+        a->pop(x86::r15);
+        a->pop(x86::rbx);
+    }
+}
+
+// a = Compiler
+// Scope = 'Right Now' scope
+// Symbols = Actual symbols [Used variables on registers]
+void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_map<uint8_t, lua_localSymbol*> *Symbols) {
+    if (_upperVarsNotRequiredHighRegistersSlot) {
+        return;
+    }
+    if (Scope->HVtoCompiler.size() == 0) {
+        return;
+    }
+    //Time to update cache
+    uint8_t _register = 0;
+    uint8_t _c_0 = 0;
+    std::vector<uint8_t> skip;
+    // Should delete references those variables which are not hot in this Scope.
+    a->mov(x86::r9, (uint64_t)PTR_MASK);
+    while (_register < 4) {
+        // Search name.
+        lua_localSymbol *smb = Symbols->at(_register);
+        bool found = false;
+        for (uint8_t i = 0; i < 4; i++) {
+            std::string name = "";
+            try {
+                name = Scope->HVtoCompiler.at(_register).first;
+            } catch (std::out_of_range &e) {
+                break;
+            }
+            // Compare symbols
+            if (smb == nullptr)
+                continue;
+            if (smb->id == name) {
+                found = true;
+            }
+        }
+        if (!found) {
+            // Purge this register.
+            x86::Gp toReg;
+            switch (_register) {
+                case 0: {
+                    toReg = x86::r12;
+                    break;
+                }
+                case 1: {
+                    toReg = x86::r13;
+                    break;
+                }
+                case 2: {
+                    toReg = x86::r14;
+                    break;
+                }
+                case 3: {
+                    toReg = x86::r15;
+                    break;
+                }
+            }
+            if (smb != nullptr) {
+                _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(smb->id), Scope, a, true, true);
+                a->mov(x86::qword_ptr(x86::rdi), toReg);
+                smb->cacheReg = 0;
+            }
+            a->xor_(toReg, toReg);
+            Symbols->at(_register) = nullptr;
+        } else {
+            skip.push_back(_register); // Ignored by other loop.
+        }
+        //
+        _register++;
+    }
+    _register = 0;
+    while (_register < 4) {
+        for (uint8_t i: skip) {
+            if (i == _register) {
+                _register++;
+                continue;
+            }
+        }
+        std::string vname;
+        try {
+            vname = Scope->HVtoCompiler.at(_register).first;
+        } catch (std::out_of_range &e) {
+            break;
+        }
+        std::cout << "VarName to Save: " << vname << " " << std::to_string(_c_0) << " Size=" <<Scope->HVtoCompiler.size() << " R=" << std::to_string(_register) << std::endl;
+        _c_0++;
+        uint8_t got = 0;
+        for (auto &e: *Symbols) {
+            if (e.second == nullptr) {
+                break;
+            }
+            if (e.second->id == vname) {
+                got = e.first; // Skip if it exists
+                break;
+            }
+        }
+        if (got == 0) {
+            // Gotta put this.
+            // Save the variable standing in this register [got]
+            lua_localSymbol *smb = Symbols->at(_register);
+            if (smb != nullptr && !smb->id.empty()) {
+                qlog0._log2(std::string(std::string("updateCacheRegisters::Save: ") + smb->id.c_str() + std::string("\n")).c_str());
+                _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(smb->id), Scope, a, true, true);
+                x86::Gp toReg;
+                smb->cacheReg = 0;
+                switch (_register) {
+                    case 0: {
+                        toReg = x86::r12;
+                        break;
+                    }
+                    case 1: {
+                        toReg = x86::r13;
+                        break;
+                    }
+                    case 2: {
+                        toReg = x86::r14;
+                        break;
+                    }
+                    case 3: {
+                        toReg = x86::r15;
+                        break;
+                    }
+                }
+                a->mov(x86::qword_ptr(x86::rdi), toReg);
+            }
+            if (smb != nullptr && smb->id == vname) {
+                _register++;
+                continue;
+            }
+            lua_localSymbol *toUse = acquireVariableFromExtensionsPtr(vname, Scope);
+            toUse->cacheReg = _register+1;
+            if (toUse->qID == 3) {
+                _register++;
+                continue; // Do not allow this.
+            }
+            qlog0._log2(std::string(std::string("updateCacheRegisters::Get: ") + toUse->id.c_str() + std::string("\n")).c_str());
+            _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(toUse->id), Scope, a, false, true);
+            x86::Gp toReg;
+            switch (_register) {
+                case 0: {
+                    toReg = x86::r12;
+                    break;
+                }
+                case 1: {
+                    toReg = x86::r13;
+                    break;
+                }
+                case 2: {
+                    toReg = x86::r14;
+                    break;
+                }
+                case 3: {
+                    toReg = x86::r15;
+                    break;
+                }
+            }
+            a->and_(x86::rdi, x86::r9);
+            a->mov(toReg, x86::rdi);
+            Symbols->at(_register) = toUse;
+        }
+        _register++;
+    }
+}
+
+x86::Gp id_to_reg(uint8_t x) {
+    x86::Gp toReg = x86::noReg;
+    switch (x) {
+        case 0: {
+            toReg = x86::r12;
+            break;
+        }
+        case 1: {
+            toReg = x86::r13;
+            break;
+        }
+        case 2: {
+            toReg = x86::r14;
+            break;
+        }
+        case 3: {
+            toReg = x86::r15;
+            break;
+        }
+    }
+    return toReg;
+}
+
+uint8_t rIdTo_symbol(uint32_t i) {
+    return static_cast<uint8_t>(i) - 12;
+}
+
+std::pair<bool, x86::Gp> areThisVarInHotVars(std::string vname, std::unordered_map<uint8_t, lua_localSymbol*> *Symbols) {
+    uint8_t n = 0xFF;
+    for (uint8_t i = 0; i < 4; i++) {
+        lua_localSymbol *smb = Symbols->at(i);
+        // Proceed.
+        if (smb == nullptr)
+            continue;
+        if (smb->id == vname) {
+            n = i;
+            break;
+        }
+    }
+    if (n != 0xFF) {
+        return {true, id_to_reg(n)};
+    }
+    return {false, x86::noReg};
+}
+
+static void dumpinf(std::vector<lua_biOpCode> *c) {
+    std::cout << "BIOPCODES: ";
+    for (lua_biOpCode &a: *c) {
+        std::cout << std::to_string(a.OPCODE) << "; ";
+    }
+    std::cout << '\n';
+    
+}
+
+/*
+ * Closures type:
+ * 1: IF
+ * 2: FOR
+ * 3: WHILE
+ * 4: REPEAT
+ */
+
+struct _closure_helper {
+    x86::Gp _uReg;
+    uint8_t closureType = 0;
+    int64_t _FOR_goal = 0;
+    TString *_vName;
+};
+
+static std::string dumpinf1(std::vector<LuaLexFrame> *c) {
+    std::string q0 = "";
+    std::cout << "EvaluateExpression: ";
+    for (LuaLexFrame &a: *c) {
+        q0.append("$[");
+        q0.append(std::to_string(a.key));
+        q0.append("]; ");
+    }
+    return q0;
+}
+
+// Search if the var are in symbols.
+
+#include <deque>
+StringLogger qlog0;
+
+// Precompiler [Uses _Lua_Keywords_Asm for optimization and labeling]
+void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPER, bool _online_gen, void *F_MEM_UF, void *F_MEM_SCR, bool Script) {
+    // Clear last buffer.
+    qlog0.clear();
+    if (_online_gen) {
+        lua_Registers.at(REG_RDI).cntId = _R_FUNC_ARGS_ENTRY;
+        lua_Registers.at(REG_RSI).cntId = _R_FUNC_ARGS_ENTRY;
+        lua_Registers.at(REG_RCX).cntId = _R_FUNC_ARGS_ENTRY;
+    }
+    dumpinf(_CODE);
+    FunctionPointer FUNC;
+    FuncArgs *ARGS;
+    std::vector<lua_biOpCode> CODE = std::vector<lua_biOpCode>(*_CODE);
+    FuncArgs *f_t_ = nullptr;
+    //std::vector<_lua_Keywords_Asm> ASM_INSTR;
+    std::unordered_map<uint8_t, lua_localSymbol*> *symbols = new std::unordered_map<uint8_t, lua_localSymbol*>({
+        {0, new lua_localSymbol()},
+        {1, new lua_localSymbol()},
+        {2, new lua_localSymbol()},
+        {3, new lua_localSymbol()},
+    });
+    std::deque<std::pair<Label, Label>> scopeBlocks;
+    lua_Scope *ActualScope;
+    bool _FOR = false;
+    uint32_t IF_statements;
+    // Assembly [ASMJIT]
+    CodeHolder code;
+    //rtS.resize(rtS.size());
+    code.init(rt.environment());
+    x86::Assembler a(&code);
+    code.set_logger(&qlog0);
+    initializeRegistersData((void*)&a);
+    /*FuncDetail fn_;
+    fn_.init(FuncSignature::build<FuncArgs*, FuncArgs*>(), rt.environment());
+    FuncFrame frame;
+    frame.init(fn_);
+    
+    //Put arguments where they need to go.
+    FuncArgsAssignment args(&fn_);
+    args.assign_all(x86::rdi);
+    args.update_func_frame(frame);
+    frame.finalize();
+    
+    //Emit
+    a.emit_prolog(frame);*/
+    
+    // magic
+    lua_biOpCode cache;
+    lua_1_biOpCode _LK = l_b_o_c_NUL;
+    uint32_t pos = 0;
+    Label k1;
+    Label k2;
+    Label k3;
+    Label k4;
+    //FuncSignature sig = FuncSignature::build<FuncArgs*, FuncArgs*>(CallConv::kIdHost);
+    //a.emit_prolog(sig);
+    a.push(x86::rbp);
+    a.mov(x86::rbp, x86::rsp);
+    frontNlowerPushes(&a, _CODE, true);
+    a.push(x86::rbx);
+    uint16_t persize = 0;
+    std::unordered_map<std::string, uint16_t> _stack_mem;
+    //Args = (FuncArgs*)rdi
+    //ScrM = (void*)rsi // Script Memory Map
+    //FunM = (void*)rdx // Upper Function Memory Map
+    //Upper function
+    void *fMem;// = 
+    uint64_t *m64bit = (uint64_t*)F_MEM_UF;
+    //Must create or place an existing memory map for locals management.
+    //If this is an live function creation, it should ever exist on rsi as uint64_t address
+    //Make a own mmap for this.
+    lua_biOpCode tMem = _CODE->at(_CODE->size()-1);
+    uint32_t s = tMem.size;
+    if (!Script) {
+        //May sum some other bytes for those variables that are outside this @nested function
+        bool _allocatedMemorySave = false;
+        if (!_CODE->at(_CODE->size()-2).nestedtoUpValues.empty()) {
+            _allocatedMemorySave = true;
+            // Alloc
+            size_t tAlloc = _CODE->at(_CODE->size()-2).nestedtoUpValues.size();
+            tAlloc--;
+            fMem = mmap(nullptr, tAlloc*8, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+            // Sum to the offset of our main variables.
+            uint32_t base = 0;
+            std::vector<std::pair<std::string, lua_localSymbol>> Alloc;
+            a.movabs(x86::r10, (uint64_t)fMem);
+            for (std::string &var: _CODE->at(_CODE->size()-2).nestedtoUpValues) {
+                //Time to recover those vars
+                lua_localSymbol k;
+                k.qID = 4;
+                k.slot = base;
+                Alloc.push_back(std::pair<std::string, lua_localSymbol>(var, k)); //Register the local
+                a.mov(x86::rax, (uint64_t)m64bit[acquireVariableFromExtensions(returnCompiledString(var), THREADRIPPER).slot]); // Copy raw bytes
+                a.mov(x86::qword_ptr(x86::r10, k.slot), x86::rax);
+                base = base + 8;
+            }
+            for (std::pair<std::string, lua_localSymbol> &j: Alloc) {
+                THREADRIPPER->symbols.insert(j);
+            }
+        }
+        uint64_t *p = nullptr;
+        uint32_t _offset = s;
+        a.sub(x86::rsp, 520 + s); // Cache; 128->256=stackarguments::16args
+        a.mov(x86::rcx, (uint64_t)F_MEM_SCR);
+        if (THREADRIPPER->lvl > 0)
+            a.mov(x86::qword_ptr(x86::rbp, -512), x86::rdi);
+        else
+            goto _saveMem;
+        if (THREADRIPPER->lvl > 1)
+            a.mov(x86::qword_ptr(x86::rbp, -520), x86::rsi);
+        if (THREADRIPPER->lvl > 2)
+            a.mov(x86::qword_ptr(x86::rbp, -24), x86::rcx);
+        _saveMem:
+        if (_allocatedMemorySave)
+            a.mov(x86::qword_ptr(x86::rbp, -32), x86::r10);
+        _0_0_0_CMPTIME_ASM_isScript = false;
+    } else { //All locals from script SHOULD be saved in a map.
+        a.sub(x86::rsp, 520); // Starting from byte 128 it should be arguments pass, and the starting from 256 should be return place 
+        if (s > 0) {
+            fMem = mmap(nullptr, s, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+            _0_0_0_CMPTIME_ASM_scriptMem = fMem;
+            _0_0_0_CMPTIME_ASM_isScript = true;
+            a.movabs(x86::rcx, (uint64_t)fMem);
+            a.mov(x86::qword_ptr(x86::rbp, -16), x86::rcx);
+        }
+    }
+    /*if (s > 0) {
+        a.xor_(x86::rdi, x86::rdi);
+        a.mov(x86::rsi, s);
+        a.mov(x86::rdx, 0x03);
+        a.mov(x86::r10, 0x22);
+        a.mov(x86::r8, -1);
+        a.xor_(x86::r9, x86::r9);
+        a.mov(x86::rax, 9);
+        a.syscall();
+        a.mov(x86::qword_ptr(x86::rsp, 24), x86::rax);
+        // Now as we got the memory page, propagate it.
+        // Mem on rax
+        if (THREADRIPPER->toEXbytes > 0) {
+            Label _loop = a.new_label();
+            Label _exit = a.new_label();
+            a.mov(x86::r9, x86::rax);
+            a.mov(x86::rdi, x86::qword_ptr(x86::rsp, s));
+            uint32_t pos = 0;
+            //while (THREADRIPPER->toEXbytes != 0) {
+            //rdx = cache obj
+            //rcx = counter+1
+            //rax = per counter
+            //rdi = arguments obj
+            //rsi = arguments count
+            //r9 = mmap obj
+            a.mov(x86::rsi, x86::qword_ptr(x86::rdi));
+            a.mov(x86::rcx, x86::rsi);
+            a.mov(x86::r8, 0x10);
+            a.bind(_loop);
+            a.mov(x86::rax, x86::rsi);
+            a.mul(x86::r8);
+            a.add(x86::rax, 0x08);
+            a.mov(x86::rdx, x86::qword_ptr(x86::rdi, x86::rax));
+            a.sub(x86::rax, 0x08);
+            a.mov(x86::qword_ptr(x86::r9, x86::rax), x86::rdx);
+            a.loop(_loop);
+            a.bind(_exit);
+        }
+    }*/
+    std::vector<_closure_helper> closures;
+    uint_fast16_t for_cnt_;
+    ActualScope = THREADRIPPER;
+    updateCacheRegisters(&a, ActualScope, symbols);
+    while (true) {
+        //Do/then and end parts should be blocks that when 'break' keyword used it should jump to end.
+        try {
+            cache = CODE.at(pos);
+        } catch (std::out_of_range &e) {
+            // Uh oh!
+            goto _END_;
+        }
+        switch (cache.OPCODE) {
+            /*
+             * AND                              .
+             * NOT                              .
+             * OR                               .
+             * VTN (Variable address)           .
+             * IF                               .
+             * ELSE                             .
+             * ELSEIF                           .
+             * SCOPE                            .
+             * SCOPE_END                        .
+             * FOR                              .
+             * FOR EXPRESSION                   .
+             * CALL <arguments>                 .
+             * DECLARATION <to store addr>      .
+             * FIRST LEXICAL OPCODES            .
+             * SYNTAX SEPARATOR                 .
+             * FUNCTION                         .
+             * RAW LUA TO EVAL                  .
+             * TABLE                            .
+             * */
+            case l_b_o_c_SCP: {
+                // Scope start, has variables in it
+                ActualScope = cache.SCOPE;
+                _LK = cache.OPCODE;
+                // Update the variables cache
+                updateCacheRegisters(&a, ActualScope, symbols);
+                break;
+            }
+            case l_b_o_c_DEC: {
+                // Declaration.
+                bool _predef_one = false;
+                LuaLexFrame k;
+                uint32_t pos = 0;
+                //_F_ASM_SEARCHVALUENTHENRETURNRAX(&cache.LLF, &pos, &a, ActualScope, &_stack_mem, &persize, true);
+                //_F_ASM_SEARCHVALUE(&cache.LLF, &pos, &a, ActualScope, true);
+                std::pair<bool, x86::Gp> chk = areThisVarInHotVars(std::string(cache.LLF.at(0)._data.begin(), cache.LLF.at(0)._data.end()), symbols);
+                if (chk.first) {
+                    qlog0._log2("prepare Pointer for data alloc: <ONLY REGISTER>\n");
+                    x86::Gp reg = CLUA_EvalExprNReturn(&cache.p.at(0), ActualScope, std::pair<bool, x86::Gp>(false, x86::noReg), false, true);
+                    _ASM__movToReg(chk.second, reg);
+                    qlog0._log2("prepare done <ONLY REGISTER>\n");
+                    qlog0._log2("\n");
+                    _LK = cache.OPCODE;
+                    break;
+                }
+                qlog0._log2("prepare Pointer for data alloc:\n");
+                bool _toHiSpeedReg = false;
+                x86::Gp uGp = _ASM__getPathToSelGp(&cache.LLF, x86::rbx, ActualScope, true);
+                if (uGp.id() > x86::Gp::Id::kIdR11)
+                    _toHiSpeedReg = true;
+                qlog0._log2("Pointer saved to REGISTER:RBX\n");
+                x86::Gp reg = CLUA_EvalExprNReturn(&cache.p.at(0), ActualScope, std::pair<bool, x86::Gp>(true, x86::rdi), false, _toHiSpeedReg);
+                //qlog0._log2("\r[ret]CLUA_EvalExprNReturn()=x86::noReg : ");
+                // RDI used here!
+                qlog0._log2("save [ret] to REGISTER:RBX>>\n");
+                _ASM_DEBUGGER_STOP();
+                a.mov(x86::qword_ptr(x86::rbx), reg);
+                if (uGp.id() > x86::Gp::Id::kIdR11) {
+                    // Should update hot variables register if available..
+                    a.mov(uGp, reg);
+                }
+                qlog0._log2("[[UPPER DONE]]\n");
+                qlog0._log2("\n");
+                _LK = cache.OPCODE;
+                break;
+            }
+            case l_b_o_c_STM: {
+                // Multiple declaration at once.
+                // The multideclaration method ONLY works for local variables.
+                // Now, let's eval the data to parse.
+                LuaType _UNK;
+                _F_ASM_MultiUse_EvalUntil(&cache.p.at(0), &a, ActualScope, _L_NONE, &_UNK, true, cache.fixedaddr);
+                // The data returned in rax should be a boolean and the data in the array... Already saved.
+                // The function executed will had in the third argument an array, which points directly into the variables so it should save it.
+                // Example: Address starting for local variables [3], slot 256 to 256+(8*3)
+                // -> lea [addr of slot 256 (start point)]
+                // But let's remember theres a limit.
+                // The specified variables to name might be tight to fit with the data returned of the function, so it maybe modify other variables.
+                // Anyways, there will be shadow space for those bugs. Well.
+                // UNSTABLE!
+                break;
+            }
+            case l_b_o_c_IFS: {
+                // Only values with NIL flag or false flag will don't allow the execution of this.
+                LuaType _UNK = LuaUnknown;
+                //_F_ASM_MultiUse_EvalUntil(&cache.p.at(0), &a, ActualScope, _L_NONE, &_UNK, false, 0);
+                x86::Gp reg = CLUA_EvalExprNReturn(&cache.p.at(0), ActualScope, std::pair<bool, x86::Gp>(false, x86::noReg), false);
+                // Let's see...
+                // on rdi.
+                Label _STARTPOINT = a.new_label();
+                Label _ENDPOINT = a.new_label();
+                a.test(reg, reg);
+                a.jz(_ENDPOINT);
+                a.movabs(x86::r8, (uint64_t)0x7FF3000000000000ULL); // 0x7FF3000000000001ULL = LuaBoolean = false
+                a.cmp(reg, x86::r8);
+                a.je(_ENDPOINT);
+                a.bind(_STARTPOINT);
+                scopeBlocks.push_back(std::pair<Label, Label>(_STARTPOINT, _ENDPOINT)); // startpoint and endpoint
+                closures.push_back(_closure_helper{reg, 1, 0});
+                IF_statements++;
+                // Scope start, has variables in it
+                ActualScope = cache.SCOPE;
+                _LK = cache.OPCODE;
+                // Update the variables cache
+                updateCacheRegisters(&a, ActualScope, symbols);
+                break;
+            }
+            case l_b_o_c_FOR: {
+                // Scope start, has variables in it
+                qlog0._log2("start::For__\n", 0xD);
+                ActualScope = cache.SCOPE;
+                _LK = cache.OPCODE;
+                // Update the variables cache
+                qlog0._log2("mid::For__<UpdateScopeVariables::START>\n");
+                updateCacheRegisters(&a, ActualScope, symbols);
+                qlog0._log2("mid::For__<UpdateScopeVariables::END>\n");
+                // Calculate which type of expr this has to offer.
+                uint8_t _type = _getForTypeExpression(&cache.p);
+                TString *varname = (TString*)cache.ptr;
+                switch (_type) {
+                    case 0: {
+                        m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("Internal error. Type for 'for' expression is 0"));
+                        m_LuaErrorHandler->setFatal(true);
+                        return nullptr;
+                    }
+                    case 1: {
+                        // Number count
+                        // Let's use our variables.
+                        // First, search it.
+                        std::pair<x86::Gp, x86::Gp> register_1 = _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(varname, ActualScope, &a, true, false);
+                        x86::Gp register_ = register_1.first;
+                        // Extract values from the expression.
+                        std::vector<int64_t> nms;
+                        for (std::vector<LuaLexFrame> &a: cache.p) {
+                            for (LuaLexFrame &b: a) {
+                                if (b.key == _L_NUMBER) {
+                                    nms.push_back(std::stoll(std::string(b._data.begin(), b._data.end())));
+                                }
+                            }
+                        }
+                        if (nms.size() < 4) {
+                            // It is illegal to had less than 3 numbers for each iteration.
+                            // Order: 0, 10, 1 = Start at 0 and each iteration must sum 1 until we reach 10
+                            for (uint8_t i = 0; i < 3; i++) {
+                                try {
+                                    (void*)nms.at(i);
+                                } catch (std::out_of_range &e) {
+                                    // Doesnt exist.
+                                    nms.push_back(1);
+                                }
+                            }
+                        }
+                        //std::reverse(nms.begin(), nms.end());
+                        uint8_t pos = 1;
+                        for (int64_t &V: nms) {
+                            std::cout << std::to_string(pos) << ": "<< std::hex << V << std::endl;
+                            pos++;
+                        }
+                        
+                        //counters.push_back(std::pair<std::vector<int64_t>, x86::Gp>(nms, register_));
+                        // Transform nms.at(2) to be a compatible value.
+                        int64_t aZ = nms.at(1);
+                        uint64_t num2 = 0x0000000000000000ULL;
+                        num2 += (uint64_t)aZ;
+                        nms.at(1) = num2;
+                        closures.push_back(_closure_helper{register_, 2, nms.at(1), varname});
+                        // Reset that number to a clear Values
+                        uint64_t num = 0x0000000000000000ULL;
+                        num += (uint64_t)nms.at(0);
+                        if (register_ != x86::rdi) { // If not rdi then is a memory-like register [r12 to r15]
+                            a.mov(register_, num);
+                            if (register_.id() > 11) {
+                                uint8_t idx = rIdTo_symbol(register_.id());
+                                symbols->at(idx)->type = LuaInteger;
+                            }
+                        } else {
+                            a.mov(x86::rdx, num);
+                            a.mov(x86::qword_ptr(x86::rdi), x86::rdx);
+                        }
+                        // Ez way to get numbers.
+                        // Create labels.
+                        Label _STARTPOINT = a.new_label();
+                        Label _ENDPOINT = a.new_label();
+                        a.bind(_STARTPOINT);
+                        scopeBlocks.push_back(std::pair<Label, Label>(_STARTPOINT, _ENDPOINT));
+                        // When reaching _ENDPOINT, must verify if num == final.
+                        break;
+                    }
+                }
+                qlog0._log2("mid::For__<MainStartScope>\n");
+                break;
+            }
+            case l_b_o_c_ELI: {
+                
+                break;
+            }
+            case l_b_o_c_ELS: {
+                // Get the label on the latest part
+                Label _STARTPOINT = a.new_label();
+                a.jmp(_STARTPOINT);
+                a.bind(scopeBlocks.back().second);
+                scopeBlocks.pop_back();
+                Label _ENDPOINT = a.new_label();
+                scopeBlocks.push_back(std::pair<Label, Label>(_STARTPOINT, _ENDPOINT));
+                break;
+            }
+            case l_b_o_c_SCE: {
+                // Let's see if FOR parent are there
+                if (closures.back().closureType == 2) {
+                    for_cnt_--;
+                    qlog0._log2("end::For__<ReachedPoint>\n");
+                    int64_t goal_ = closures.back()._FOR_goal;
+                    // Counter is at some state..
+                    // Uhm, let's check registers.
+                    x86::Gp _uReg = closures.back()._uReg;
+                    a.movabs(x86::r8, (uint64_t)goal_);
+                    if (_uReg != x86::rdi) {
+                        // We can do direct arithmetic.
+                        a.cmp(_uReg, x86::r8);
+                        a.jae(scopeBlocks.back().second);
+                        a.inc(_uReg);
+                        a.jmp(scopeBlocks.back().first);
+                    } else {
+                        std::pair<x86::Gp, x86::Gp> register_ = _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(closures.back()._vName, ActualScope, &a, false, false, true);
+                        if (register_.first != x86::rdi) {
+                            // We can do direct arithmetic.
+                            a.cmp(register_.first, x86::r8);
+                            a.jae(scopeBlocks.back().second);
+                            a.inc(register_.first);
+                            a.jmp(scopeBlocks.back().first);
+                        } else {
+                            // We can do direct arithmetic.
+                            a.inc(x86::qword_ptr(register_.second));
+                            a.cmp(x86::rdi, x86::r8); // the same thing..
+                            a.jae(scopeBlocks.back().second);
+                            a.jmp(scopeBlocks.back().first);
+                        }
+                    }
+                    closures.pop_back();
+                    qlog0._log2("end::For__<END>\n");
+                } else {
+                    closures.pop_back();
+                }
+                // At the most top must close.
+                a.bind(scopeBlocks.back().second);
+                scopeBlocks.pop_back();
+                // Exit scope.
+                ActualScope = ActualScope->rSCOPE;
+                updateCacheRegisters(&a, ActualScope, symbols);
+                break;
+            }
+            case l_b_o_c_STO: {
+                //a.mov(x86::rdi, (uint64_t)cache.V);
+                //getValueRequestedNput_to(x86::rbx, &cache.p.at(0));
+                // GET THE VALUE.
+                // always the first value, the multiple values one are STM
+                std::string aB = "Search var to use: ";
+                //aB.append(std::string(((TString*)cache.p.at(0).at(0).a)->data),((TString*)cache.p.at(0).at(0).a)->len);
+                //aB.append("\n");
+                qlog0._log2(aB.c_str());
+                //qlog0._log2(cache.p.at(0).at(0).addr->getHeaderVarString().c_str());
+                qlog0._log2("\n");
+                x86::Gp reg = CLUA_EvalExprNReturn(&cache.p.at(0), ActualScope, std::pair<bool, x86::Gp>(true, x86::rcx), false);
+                //_F_ASM_MultiUse_EvalUntil(&cache.p.at(0), &a, ActualScope, _L_NONE, &_);
+                int32_t offset = 512;
+                offset += cache.toMemOffset;
+                qlog0._log2("Save to PTR\n");
+                if (!Script)
+                    a.mov(x86::qword_ptr(x86::rbp, (offset*-1)), reg);
+                else {
+                    if (reg == x86::rsi) {
+                        a.mov(x86::r9, (uint64_t)fMem);
+                        a.mov(x86::qword_ptr(x86::r9, cache.toMemOffset), reg);
+                        goto _LKUPDT;
+                    }
+                    a.mov(x86::rsi, (uint64_t)fMem);
+                    a.mov(x86::qword_ptr(x86::rsi, cache.toMemOffset), reg);
+                }
+                qlog0._log2("END save to PTR 'var'\n");
+                qlog0._log2("\n");
+                _LKUPDT:
+                _LK = cache.OPCODE;
+                break;
+            }
+            case l_b_o_c_FUN: {
+                qlog0._log2("FunctionGeneration:Start\n");
+                if (_LK == l_b_o_c_DEC) {
+                    a.mov(x86::qword_ptr(x86::rsp, -248), x86::rax); // Save the direction.
+                }
+                a.mov(x86::rdi, (uint64_t)cache.FuncPTR2);
+                a.mov(x86::rsi, (uint64_t)cache.SCOPE);
+                a.mov(x86::rdx, (uint64_t)true);
+                //a.movabs(x86::rcx, (uint64_t));
+                //auto func_ptr = static_cast<FunctionPointer(*)(std::vector<lua_biOpCode>*, lua_Scope*, bool)>(&luaBundleFunction); 
+                a.call((uint64_t)luaBundleFunction);
+                qlog0._log2("FunctionGeneration:End\n");
+                qlog0._log2("FunctionGeneration:SaveStart\n");
+                a.mov(x86::rbx, x86::rax);
+                x86::Gp uGp = _ASM__getPathToSelGp(cache.path->getData(), x86::rdx, ActualScope, true);
+                a.mov(x86::qword_ptr(uGp), x86::rbx);
+                qlog0._log2("FunctionGeneration:SaveEnd\n");
+                // Save function
+                if (cache._F_LOCAL) {
+                    
+                } else {
+                    if (_LK == l_b_o_c_DEC) {
+                        //We got the func, now store it.
+                    } else {
+                        // If it has a declaration...
+                    }
+                }
+                _LK = cache.OPCODE;
+                break;
+            }
+            case l_b_o_c_CFN: {
+                if (cache.ATR == 0) {
+                    // Let's check if has a fixed address
+                    if (cache.fixedaddr != 0) {
+                        // Yay!
+                        // Move arguments.
+                        qlog0._log2("CallFunc( fixedaddr )::Start\n");
+                        qlog0._log2("CallFunc( fixedaddr )::_args[START]\n");
+                        qlog0._log2("CallFunc( fixedaddr )::_args[CONTENTS]: ");
+                        qlog0._log2(std::to_string(cache.p.at(0).size()).c_str());
+                        qlog0._log2("\n");
+                        qlog0._log2(dumpinf1(&cache.p.at(0)).c_str());
+                        qlog0._log2("\n");
+                        _F_ASM_MAKEFUNCTIONARGUMENTS(&cache.p, &a, ActualScope, false, 0); // Should contain rdi, rsi and rdx
+                        qlog0._log2("CallFunc( fixedaddr )::_args[END]\n");
+                        // Now the func address
+                        //a.mov(x86::r9, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                        //a.and_(x86::r8, x86::r9);
+                        // No need to jump 8bytes.
+                        //qlog0._log2("CallFunc( fixedaddr )::_addr\n");
+                        qlog0._log2("CallFunc( fixedaddr )::Call: ");
+                        qlog0._log2(std::to_string((uintptr_t)cache.fixedaddr).c_str());
+                        qlog0._log2("\n");
+                        a.call(lua_getPtr(*(Values*)cache.fixedaddr));
+                        
+                        qlog0._log2("CallFunc( fixedaddr )::End\n");
+                    } else {
+                        // Let's find their address.
+                        qlog0._log2("CallFunc( common )::Start\n");
+                        uint32_t pos = 0;
+                        _F_ASM_SEARCHVALUE(cache.path->getData(), &pos, &a, ActualScope, false);
+                        a.mov(x86::rbx, x86::rdi);
+                        //a.ud2(); 
+                        _F_ASM_MAKEFUNCTIONARGUMENTS(&cache.p, &a, ActualScope, false, 0);
+                        a.movabs(x86::rax, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                        a.and_(x86::rbx, x86::rax);
+                        //a.shl(x86::r10, 16);
+                        //a.sar(x86::r10, 16); 
+                        //a.ud2();
+                        a.call(x86::rbx);
+                        qlog0._log2("CallFunc( common )::End\n");
+                    }
+                }
+                _LK = cache.OPCODE;
+                break;
+            }
+            case l_b_o_c_VTN: { // Maybe its like this: local var0 = hallo["there"];
+                if (_LK == l_b_o_c_DEC) {
+                } else {
+                    //No other usage.. Crash.
+                }
+            }
+            default: {
+                // Huh?
+            }
+        }
+        pos++;
+    }
+    //Free those pointers.
+    _END_:
+    a.xor_(x86::rax, x86::rax);
+    frontNlowerPushes(&a, _CODE, false);
+    a.leave();
+    a.ret();
+    
+    //Emit
+    //a.emit_epilog(frame);
+    
+    a.finalize();
+    
+    std::cout << "\033[1;33mAssembly Code:\033[0m \n" << qlog0.data() << "" << std::endl;
+    void *toalloc = nullptr;
+    Error ERR = rt.add(&toalloc, &code);
+    if (ERR != Error::kOk) {
+        return nullptr;
+    }
+    //K(new FuncArgs());
+    return toalloc;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

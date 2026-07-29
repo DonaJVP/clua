@@ -1,0 +1,827 @@
+/*
+** $Id: lapi.c,v 2.55.1.5 2008/07/04 18:41:18 roberto Exp $
+** Lua API
+** See Copyright Notice in lua.h
+*/
+
+
+#include <assert.h>
+#include <math.h>
+#include <stdarg.h>
+#include <string.h>
+
+
+const char lua_ident[] =
+  "$Lua: " LUA_RELEASE " " LUA_COPYRIGHT " $\n"
+  "$Authors: " LUA_AUTHORS " $\n"
+  "$URL: www.lua.org $\n";
+
+// NOTE: The entire script that we load "*.lua" files must be loaded and then compiled to AsmJIT for faster work.
+
+#include <string_view>
+
+/*
+*	Basic functions for VM management
+*/
+
+// Set nil an place of the vm [ Equals to a NULL or nullptr ]
+void Lua::setNil(lua_Table *tbl, const lua_IndexMethod place) { //place should already be hashed here
+	Values *nil = new Values();
+	nil->TYPO = LuaNil;
+	
+	lua_AddrSpec addr;
+	addr.Addr = (place.idx_typo == _lua_idxm_string) ? place.idx_str_h : NULL;
+	addr.Addr2 = (place.idx_typo == _lua_idxm_integer) ? place.idx_int : NULL;
+	
+	// Check if theres an assigned value so we can clear it safely
+	if (place.idx_typo == _lua_idxm_string && tbl->Node->getValueAddr(place.idx_str_h) != nullptr) { // Index is a string
+		if (tbl->Node->getValueAddr(place.idx_str_h)->TYPO == LuaTable) {
+			// Must clear table contents
+			tbl->Node->getValueAddr(place.idx_str_h)->val3->clearTable();
+			delete tbl->Node->getValueAddr(place.idx_str_h);
+		} else {
+			// Unlink & delete (Don't delete references, as it would help the developer to debug the accidental deletions)
+			switch (tbl->Node->getValueAddr(place.idx_str_h)->TYPO) {
+				case (LuaInteger || LuaString): {
+					// Just delete
+					delete tbl->Node->getValueAddr(place.idx_str_h);
+					break;
+				}
+				case (LuaFunction): {
+					delete tbl->Node->getValueAddr(place.idx_str_h)->val4;
+					delete tbl->Node->getValueAddr(place.idx_str_h);
+					break;
+				}
+				case (LuaObject): {
+					delete tbl->Node->getValueAddr(place.idx_str_h)->val2; // Dangerous
+				}
+				case (LuaTable): {
+					m_LuaErrorHandler->reportWarning("For some reason the code did magic ignoring some coding rules >:v"); // The code should be modified to get here
+					break;
+				} 
+				case (LuaUsertype): {
+					// Idk how to deal with this
+				}
+			}
+		}
+	} else if (place.idx_typo == _lua_idxm_integer && tbl->Node->getRawAddrValueIDX(place.idx_int) != nullptr) { //Index is an number
+		if (tbl->Node->getRawAddrValueIDX(place.idx_int)->TYPO == LuaTable) {
+			// Must clear table contents
+			tbl->Node->getRawAddrValueIDX(place.idx_int)->val3->clearTable();
+			delete tbl->Node->getRawAddrValueIDX(place.idx_int);
+		} else {
+			// Unlink & delete (Don't delete references, as it would help the developer to debug the accidental deletions)
+			switch (tbl->Node->getRawAddrValueIDX(place.idx_int)->TYPO) {
+				case (LuaInteger || LuaString): {
+					// Just delete
+					delete tbl->Node->getRawAddrValueIDX(place.idx_int);
+					break;
+				}
+				case (LuaFunction): {
+					delete tbl->Node->getRawAddrValueIDX(place.idx_int)->val4;
+					delete tbl->Node->getRawAddrValueIDX(place.idx_int);
+					break;
+				}
+				case (LuaObject): {
+					delete tbl->Node->getRawAddrValueIDX(place.idx_int)->val2; // Dangerous
+				}
+				case (LuaTable): {
+					m_LuaErrorHandler->reportWarning("For some reason the code did magic ignoring some coding rules >:v"); // The code should be modified if it gets here
+					break;
+				} 
+				case (LuaUsertype): {
+					// Idk how to deal with this
+				}
+			}
+		}
+	}
+	tbl->setValue(addr, nil);
+}
+
+/*
+*	Functions Management
+*/
+
+std::vector<Values> Lua::callLuaFunction(lua_Table *tbl, const lua_IndexMethod funcid, std::vector<Values> args) { // Let's remember that lua code are transformed into ASM code
+	//FunctionPointer fn = nullptr;
+	Values *index = nullptr;
+	// Get the function (Not sure but if a c function are stored here it can be executed back again lol)
+	try {
+		if (funcid.idx_typo == _lua_idxm_string)
+			index = tbl->Node->getValueAddr(funcid.idx_str_h);
+		else
+			index = tbl->Node->getRawAddrValueIDX(funcid.idx_int);
+		// Should we check if the function are valid? Obviously not if we register in on other table.....
+	} catch (std::out_of_range &e) {
+		// Oops! We might found a misundertanding sir! We will report this case
+		// First, let's check if the function was registered so we can get its real name
+		m_LuaErrorHandler->reportError(_lua_es_ValueIsNil, ((funcid.idx_typo == _lua_idxm_string) ? funcid.idx_str_h : funcid.idx_int));
+		if ((funcid.idx_typo == _lua_idxm_string) && tbl->Node->getAddrInfo(funcid)) {
+			// Seems it was registered, but deleted.
+			lua_VarOnMemInfo *ai = tbl->Node->getAddrInfo(funcid);
+			m_LuaErrorHandler->reportError(_lua_es_ArgIsProblem, funcid.idx_str_h, std::string("FuncID equals to: " + ai->varname + "; Type=" + ((int)ai->type)))
+		} else {
+			//m_LuaErrorHandler->reportError(_lua_es_ArgIsProblem, funcid, std::string("FuncID")) //Could not report something that is in a idx, also, it already was reported.
+		}
+		return std::vector<Values>;
+	}
+	// We found, first, verify the data
+	if (index->TYPO != LuaFunction) {
+		m_LuaErrorHandler->reportError(_lua_es_NonFunction, ((funcid.idx_typo == _lua_idxm_string) ? funcid.idx_str_h : funcid.idx_int), std::string("FuncID equals to: " + ai->varname + "; Type=" + ((int)ai->type)));
+		return;
+	}
+	FunctionPointer func = index->val4;
+	return func(args);
+}
+
+// Register function into the VM
+size_t Lua::registerCFunction(FunctionPointer fn, lua_IndexMethod to_index, lua_Table *tbl, _lua_TablePos pos) { // Should return an 'Identifier'
+	// Registers the function in the main shelf and then puts a reference into the table
+	// Register the function (hashed)
+	
+	// Raw value data
+	Values *data = new Values();
+	data->TYPO = LuaFunction;
+	data->val4 = fn;
+	data->__varname = name;
+	
+	size_t ID;
+	
+	switch (to_index.idx_typo) {
+		case (_lua_idxm_string): {
+			size_t _h = std::hash<std::string_view>{}(std::string_view(to_index.idx_str, strlen(to_index.idx_str)));
+			//REGISTERED_FUNCTIONS[_h] = fn; //WARNING: Not secure.
+			
+			// AddrInfo
+			lua_AddrSpec addr;
+			addr.Type = _last_Hashed;
+			addr.Addr = _h;
+			{
+				_luaBase_VariableInfo lbvi;
+				lbvi._name = std::string(to_index.idx_str);
+				addr.Info = lbvi;
+			}
+			
+			// Unless specified.
+			if (pos == _lua_tpos_node) {
+				tbl->Node->setValue(addr, data);
+			} else if (pos == _lua_tpos_meta) {
+				// Do nothing. (Idk about the metatables)
+			}
+			
+			ID = _h;
+			
+			break;
+		}
+		case (_lua_idxm_integer): {
+			// Should be a submap here? We don't want collisions here...
+			// Mmmmmm, should we add a signature of the table with the function?
+			// Oh, i think about getting random addresses for the function [WHILE REGISTERING BECAUSE OF O(n)].
+			// This should not occur:
+			/*
+			* A function is registered without specified table: testFunc()
+			* But then i register another function BUT inside a table: { ["testFunc"] = function() end }
+			* It would register anyways on the REGISTERED_FUNCTIONS with the same hash and would make collision...
+			* Huh...
+			*/
+			// AddrInfo
+			lua_AddrSpec addr;
+			addr.Type = _last_Integer;
+			addr.Addr2 = to_index.idx_int; // We're don't using a integer-indexed table.
+			{
+				_luaBase_VariableInfo lbvi;
+				lbvi._name = std::string(to_index.idx_int);
+				addr.Info = lbvi;
+			}
+			
+			if (pos == _lua_tpos_node) {
+				tbl->Node->setValue(addr, data);
+			} else if (pos == _lua_tpos_meta) {
+				// Do nothing. (Idk about the metatables)
+			}
+			
+			ID = to_index.idx_int; // Not needed to hash
+			
+			break;
+		}
+	}
+	
+	// User pre-defined descriptions
+	if (lvomi != nullptr)
+		tbl->Node->linkAddrToInfo(ID, lua_VarOnMemInfo(std::string((to_index.idx_typo == _lua_idxm_string) ? to_index.idx_str : ID), ID, LuaFunction));
+	
+	return ID;
+}
+
+// Welp. I thinked this would get even bigger than normal lua, but it ins't.
+// That's sad.
+/*
+	THIS LUA COPY WILL BE CALLED cLua as it works like a compiler. (I just made this for my luanti game)
+	The syntax will be the common, just with few advantages as multithread support
+	mutex will be available too.
+	
+	This don't work with stack base, this works with tree-walk engine based, so, enjoy using lua_Table* as lua_Stack*
+*/
+
+// Table/State manipulation
+
+// LuaTableBase //
+
+// Returns a index-INT value [Copy]
+Values LuaTableBase::getValueIDX(uint32_t val) {
+	// val are a address
+	// This returns a copy.
+	return std::copy(_Base2[val]);
+}
+
+// Returns a index-INT value
+void *LuaTableBase::getRawAddrValueIDX(uint32_t val) {
+	if (_Base2.size() <= val) {
+		return &_Base2[val];
+	}
+	return nullptr;
+}
+
+// Returns a index-defined value
+Values *LuaTableBase::getValueAddr(size_t val) {
+	Values *data = nullptr;
+	try {
+		data = _Base.at(val);
+	} catch (std::out_of_range &e) {
+		// Oops!
+		std::string err_info = "";
+		try {
+			lua_VarOnMemInfo addr_inf = *AddrToInfo.at(val);
+			err_info = luaVarInfoToString(addr_inf);
+		} catch (std::out_of_range &e) {
+			// Ignore. It is sad to find a unknown value somewhere
+		}
+		m_LuaErrorHandler->reportWarning(_lua_es_UnknownDataIdx, 9898986555, std::string(""));
+		data = new Values();
+		data->TYPO = LuaNil;
+		return data;
+	}
+	return data;
+}
+
+// It's the true, its the true, it's the trie
+// kinda love.........
+
+void LuaTableBase::setValue(lua_AddrSpec pos, Values *val) {
+	if (pos->Type == _last_Hashed) { // It might look like this on lua: __n1["duh"] = nil; && __n1.duh = nil;
+		// TO OBJ: _Base
+		_Base.insert(std::pair<size_t, Values*>(pos.Addr, val));
+		if (pos.Info != NULL) {
+			// Debug
+			lua_VarOnMemInfo *vomi = new lua_VarOnMemInfo(pos.Info._name, pos.Addr, val->TYPO);
+			linkAddrToInfo(pos.Addr, vomi);
+		}
+	} else if (pos->Type == _last_Integer) {
+		_Base2[pos.Addr2] = val;
+		if (pos.Info != NULL) {
+			// Debug
+			lua_VarOnMemInfo *vomi = new lua_VarOnMemInfo(pos.Info._name, pos.Addr, val->TYPO);
+			linkAddrToInfo(pos.Addr, vomi);
+		}
+	}
+}
+
+// Table clearing
+
+void LuaTableBase::clearTable() {
+	uint32_t idx = 0;
+	for (Values *OBJ : _Base2) {
+		// Clear the vector
+		m_Lua->setNil(this, lua_IndexMethod(_lua_idxm_integer, NULL, idx));
+		idx++;
+	}
+	// Clear the raw table
+	for (auto it = _Base.begin(); it != _Base.end(); it++) {
+		m_Lua->setNil(this, lua_IndexMethod(_lua_idxm_string, it->first, 0));
+	}
+}
+
+// Special for debug
+
+void LuaTableBase::linkAddrToInfo(size_t addr, lua_VarOnMemInfo *L_vomi) {
+	AddrToInfo.insert(std::pair<size_t, lua_VarOnMemInfo*>(addr, L_vomi));
+}
+
+/*
+*
+* Lexical reader
+* To read the data must be an uint8_t string.
+*
+*/
+
+extern const std::string _LuaKeysString[85] = {
+	"function",					// 0
+	"__func",					// 1
+	"001"						// 2
+	"local",					// 3
+	"__onThisSector",			// 4
+	"002",						// 5
+	"while",					// 6
+	"__loop",					// 7
+	"003",						// 8
+	"until",					// 9
+	"__cancelOn",				// 0
+	"004",						// 1
+	"for",						// 2
+	"__getElements",			// 3
+	"005",						// 4
+	"repeat",					// 5
+	"__loop_until",				// 6
+	"006",						// 7
+	"bool",						// 8
+	"010",						// 9
+	"int",						// 0
+	"011",						// 1
+	"string",					// 2
+	"012",						// 3
+	"do",						// 4
+	"B{",						// 5
+	"007",						// 6
+	"end",						// 7
+	"B}",						// 8
+	"008",						// 9
+	"and",						// 0
+	"&&",						// 1
+	"009",						// 2
+	"else",						// 3
+	"|%",						// 4
+	"013",						// 5
+	"elseif",					// 7
+	"|&",						// 8
+	"014",						// 9
+	"or",						// 0
+	"||",						// 1
+	"015",						// 2
+	"if",						// 3
+	"016",						// 4
+	"then",						// 5
+	"017",						// 6
+	"break",					// 7
+	"stop",						// 8
+	"018",						// 9
+	"in"						// 0
+	"019",						// 1
+	"nil",						// 2
+	"020",						// 3
+	"not",						// 4
+	"!",						// 5
+	"021",						// 6
+	"return",					// 7
+	"022",						// 8
+	"true"						// 9
+	"_1",						// 0
+	"023",						// 1
+	"false",					// 2
+	"_0",						// 3
+	"024",						// 4
+	"",							// 5
+	"",							// 6
+	"",							// 7
+	"",							// 8
+	"..",						// 9
+	"&+",						// 0
+	"025",						// 1
+	"...",						// 2
+	"__args",					// 3
+	"026",						// 4
+	"==",						// 5
+	"027",						// 6
+	">=",						// 7
+	"__equals_or_more",			// 8
+	"028",						// 9
+	"<=",						// 0
+	"__equals_or_minus",		// 1
+	"029",						// 2
+	"~=",						// 3
+	"__doenst_equals",			// 4
+	"030",						// 5
+};
+
+LuaLexFrame LuaLex::resolveCommandString(std::vector<uint8_t> *data, std::string __cmd, uint64_t pos) {
+	_Lua_Lex_Keys _KEY = _L_MAX;
+	uint8_t range = 0;
+	bool got = false;
+	__CheckSect: { // Range selector
+		if (!got)
+			goto __MAIN_PROC;
+		switch (range) {
+			// Execution spaces
+			case ((range >= 0) && (range < 3)): { // function sector
+				_KEY = _L_FUNCTION;
+				break;
+			}
+			case ((range >= 3) && (range < 6)): { // local sector
+				_KEY = _L_LOCAL;
+				break
+			}
+			case ((range >= 6) && (range < 9)): { // while sector
+				_KEY = _L_WHILE;
+				break
+			}
+			case ((range >= 9) && (range < 12)): { // until sector
+				_KEY = _L_UNTIL;
+				break
+			}
+			case ((range >= 12) && (range < 15)): { // for sector
+				_KEY = _L_FOR;
+				break
+			}
+			case ((range >= 15) && (range < 18)): { // repeat sector
+				_KEY = _L_REPEAT;
+				break
+			}
+			
+			// Naming spaces
+			case ((range >= 18) && (range < 20)): { // bool sector
+				_KEY = _L_BOOL;
+				break
+			}
+			case ((range >= 20) && (range < 22)): { // int sector
+				_KEY = _L_INT;
+				break
+			}
+			case ((range >= 22) && (range < 24)): { // string sector
+				_KEY = _L_STRING2;
+				break
+			}
+			
+			// Logical spaces
+			case ((range >= 24) && (range < 27)): { // do sector
+				_KEY = _L_BlockStart;
+				break
+			}
+			case ((range >= 27) && (range < 30)): { // end sector
+				_KEY = _L_BlockEnd;
+				break
+			}
+			case ((range >= 30) && (range < 33)): { // and sector
+				_KEY = _L_AND;
+				break
+			}
+			case ((range >= 33) && (range < 36)): { // else sector
+				_KEY = _L_ELSE;
+				break
+			}
+			case ((range >= 36) && (range < 39)): { // elseif sector
+				_KEY = _L_ELSEIF;
+				break
+			}
+			case ((range >= 39) && (range < 42)): { // or sector
+				_KEY = _L_OR;
+				break
+			}
+			case ((range >= 42) && (range < 44)): { // if sector
+				_KEY = _L_IF;
+				break
+			}
+			case ((range >= 44) && (range < 46)): { // then sector
+				_KEY = _L_THEN;
+				break
+			}
+			case ((range >= 46) && (range < 49)): { // break sector
+				_KEY = _L_BREAK;
+				break
+			}
+			case ((range >= 49) && (range < 51)): { // in sector
+				_KEY = _L_IN;
+				break
+			}
+			case ((range >= 51) && (range < 53)): { // nil sector
+				_KEY = _L_NIL;
+				break
+			}
+			case ((range >= 53) && (range < 56)): { // not sector
+				_KEY = _L_NOT;
+				break
+			}
+			case ((range >= 56) && (range < 58)): { // return sector
+				_KEY = _L_RETURN;
+				break
+			}
+			
+			// Values space
+			case ((range >= 58) && (range < 61)): { // elseif sector
+				_KEY = _L_TRUE;
+				break
+			}
+			case ((range >= 61) && (range < 64)): { // elseif sector
+				_KEY = _L_FALSE;
+				break
+			}
+			
+			// Special values that won't fit
+			case ((range >= 64) && (range < 68)): { // elseif sector
+				switch (range) {
+					case (64): {
+						_KEY = _L_NUMBER;
+						break
+					}
+					case (65): {
+						_KEY = _L_STRING;
+						break
+					}
+					case (66): {
+						_KEY = _L_VARNAME;
+						break
+					}
+					case (67): {
+						_KEY = _L_EOF;
+						break
+					}
+				}
+				break
+			}
+			
+			// Logical spaces
+			case ((range >= 68) && (range < 71)): { // elseif sector
+				_KEY = _L_CONCAT;
+				break
+			}
+			case ((range >= 71) && (range < 74)): { // elseif sector
+				_KEY = _L_MULTIPLEARGS;
+				break
+			}
+			case ((range >= 74) && (range < 76)): { // elseif sector
+				_KEY = _L_EQUALS;
+				break
+			}
+			case ((range >= 76) && (range < 79)): { // elseif sector
+				_KEY = _L_EQUALS_OR_MORE;
+				break
+			}
+			case ((range >= 79) && (range < 82)): { // elseif sector
+				_KEY = _L_EQUALS_OR_MINUS;
+				break
+			}
+			case ((range >= 82) && (range < 85)): { // elseif sector
+				_KEY = _L_DOENST_EQUALS;
+				break
+			}
+			// case _L_MAX is not seen.
+		}
+	}
+	
+	__MAIN_PROC: 
+	
+	// Let's search that word
+	// NOTE: The pos should be at the position 0 of the selected word, like this [V]ar1
+	
+	for (std::string keyword : _LuaKeysString) {
+		if (keyword == __cmd) {
+			got = true;
+			goto __CheckSect;
+			break;
+		} else {
+			range++;
+		}
+	}
+	
+	if (got) {
+		return LuaLexFrame(_KEY);
+	} else {
+		// Huh? if not found then it should be a declaration
+		// Well, now we will check the pos
+		//std::vector<uint8_t>::iterator it;
+		//for (it = data.begin()+(pos-1); it != data.end(); it++) { // Start in position, minus 1
+			
+		//}
+		
+		//Return a special key
+		LuaLexFrame key = LuaLexFrame(_L_DECLR);
+		key.header = __cmd;
+		return key;
+	}
+}
+
+void LuaLex::readDataAndloadToLua(std::vector<uint8_t> data) {
+	// Read contents and parse
+	std::vector<LuaLexFrame> _BLOCKS;
+	std::vector<std::string> _WORDS_CACHE;
+	
+	// Lexical checkers
+	std::pair<bool, uint32_t> PR_str = std::make_pair(false, 0);
+	bool PR_brk = false;
+	bool PR_blk = false;
+	bool PR_jmp = false;
+	bool PR_cmt = false;
+	bool PR_bcm = false;
+	bool PR_dfn = false;
+	
+	uint16_t actual_line = 0;
+	uint64_t pos = 0;
+	uint32_t last_ProcWordLen = 0;
+	
+	bool _proc = false;
+	_PROC_WORD: {
+		if (_proc) {
+			LuaLexFrame block = resolveCommandString(&data, std::string(&data[pos], last_ProcWordLen), pos);
+			_BLOCKS.push_back(block);
+		}
+	}
+	//Sector _PROC_WORD;
+	
+	bool PR_passed_thr = false;
+	
+	// Show the strings
+	std::string cache;
+	for (uint8_t &byte: data) {
+		if ((byte == ' ') || (byte == '{') || (byte == '}') || (byte == '[') || (byte == ']') || (byte == '(') || (byte == ')')) {
+			if (cache.size() > 0) {
+				_WORDS_CACHE.push_back(cache);
+				cache.clear();
+			}
+		} else {
+			cache.append(byte);
+		}
+	}
+	
+	for (uint8_t &byte : data) {
+		switch (byte) {
+			case '\n': {
+				if (PR_str.first) { // Unfinished string
+					m_LuaErrorHandler->reportError(_lua_es_BadString, 0, std::string("Bad string formed on line: " + std::string(actual_line)));
+					m_LuaErrorHandler->setFatal(true);
+				}
+				actual_line++;
+				
+				PR_cmt = false;
+				break;
+			}
+			
+			// Special case
+			case 'B': {
+				// A block, opening or closing
+				if ((data.at(pos+1) == "{") || (data.at(pos+1) == "}")) {
+					pos++;
+					PR_blk = (data.at(pos+1) == "{"); // If not that character then it are false, YOU'LL SEE.
+					continue;
+				}
+			}
+			
+			case '[': { // If double [[ it should've an big comment or a [[BIG TEXT]] sector
+				if (PR_str.first)
+					goto __SectDef;
+				else if (PR_cmt) { // Let's see the next 2 bytes.
+					//Now our pos are [, lets check the next character
+					if (data.at(pos+1) == "[") { // It's a [[BIG COMMENT]]
+						PR_bcm = true;
+						pos++;
+						continue;
+					}
+				}
+				// It might be other thing...
+				
+				break;
+			}
+			case ']': {
+				if (data.at(pos+1) == "]") {
+					if (PR_bcm) {
+						PR_bcm = false;
+						// the [[BIG COMMENT]] ends here
+					}
+					pos++;
+					continue;
+				}
+			}
+			case '-': {
+				if (data.at(pos+1) == "-") { // It are a full comment or a decrement on a var
+					if (last_ProcWordLen <= 0) {
+						pos++;
+						PR_cmt = true;
+						continue;
+					} else {
+						// Is a variable, so decrement that
+						std::string variablename = std::string(&data[pos], last_ProcWordLen);
+						last_ProcWordLen = 0;
+						LuaLexFrame _frm = LuaLexFrame(_L_DECREMENT_VARNUM);
+						_frm.header = variablename;
+						// _frm._data doens't require data
+						_BLOCKS.push_back(_frm);
+					}
+				}
+			}
+			case ' ': {
+				if (PR_str.first || PR_cmt || PR_bcm)
+					goto __SectDef;
+					
+				// Let's consider the space is ignored in programming, hehe.
+				// Unless is a comment, or this: wellthisisa[[BIGCOMMENT]]
+				// BUT SOMETIMES
+				
+				_WORDS_CACHE.push_back(std::string(&data[pos], last_ProcWordLen));
+				last_ProcWordLen = 0;
+				break;
+			}
+			case '(': {
+				if (PR_str.first || PR_cmt || PR_bcm)
+					goto __SectDef;
+				
+				// This should be used like this
+				// func()
+				// ]("hi")
+				// ("huh" ...
+				
+				if (*(_WORDS_CACHE.end()-1) == "function") { // We're defining a function, like this: function HALLOTHERE (
+					
+				}
+				
+				break;
+			}
+			case '.': { // _L_ON_TO_GO | _L_CONCAT | _L_MULTIPLEARGS
+				if (PR_str.first || PR_cmt || PR_bcm)
+					goto __SectDef;
+				break;
+			}
+			
+			case '{': {
+				if (PR_str.first || PR_cmt || PR_bcm)
+					goto __SectDef;
+				break;
+			}
+			case '"': { // Start/End of a string
+				if (PR_cmt || PR_bcm)
+					goto __SectDef;
+				
+				if (!PR_str.first) { //Start
+					PR_str.first = true;
+					PR_str.second = pos;
+				} else {
+					// Manage to extract this part of string
+					
+					std::string _str = std::string(&data[PR_str.second], last_ProcWordLen);
+					
+					// Close string
+					PR_str.first = false;
+					PR_str.second = 0;
+					
+					// Push
+					LuaLexFrame _frm = LuaLexFrame(_L_STRING);
+					memcpy(&_frm._data[0], &data[pos], (size_t)last_ProcWordLen);
+					_BLOCKS.push_back(_frm);
+				}
+				break;
+			}
+			case ''': {
+				if (PR_str.first)
+					goto __SectDef;
+				break;
+			}
+__SectEq:
+			case '=': {
+				if (PR_str.first)
+					goto __SectDef;
+				break;
+			}
+__SectDef:
+			default: {
+				// Must be other characters
+				last_ProcWordLen++;
+			}
+		}
+		pos++;
+	}
+}
+
+// This piece of shit fills you with determination
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

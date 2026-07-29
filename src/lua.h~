@@ -1,0 +1,394 @@
+/******************************************************************************
+* Copyright (C) 1994-2012 Lua.org, PUC-Rio.  All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining
+* a copy of this software and associated documentation files (the
+* "Software"), to deal in the Software without restriction, including
+* without limitation the rights to use, copy, modify, merge, publish,
+* distribute, sublicense, and/or sell copies of the Software, and to
+* permit persons to whom the Software is furnished to do so, subject to
+* the following conditions:
+*
+* The above copyright notice and this permission notice shall be
+* included in all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+******************************************************************************/
+
+/*
+
+	SOFTWARE MODIFED BY LOGIKI (Donatto J. V. P.) 2025
+
+*/
+
+#include <stdarg.h>
+#include <stddef.h>
+#include "luaconf.h"
+
+// Converted from Stack to Tree-walk
+// The fun is infinite.
+
+#define LUA_VERSION				"Lua 5.1"
+#define LUA_RELEASE				"Lua 5.1.5 TW"
+#define LUA_VERSION_NUM			501
+#define LUA_COPYRIGHT			"Copyright (C) 1994-2012 Lua.org, PUC-Rio"
+#define LUA_AUTHORS 			"R. Ierusalimschy, L. H. de Figueiredo & W. Celes"
+
+// Types
+//efine TYPE					VALUE
+#define LUA_TNONE				(-1)
+#define LUA_TNIL				0
+#define LUA_TBOOLEAN			1
+#define LUA_TLIGHTUSERDATA		2
+#define LUA_TNUMBER				3
+#define LUA_TSTRING				4
+#define LUA_TTABLE				5
+#define LUA_TFUNCTION			6
+#define LUA_TUSERDATA			7
+#define LUA_TTHREAD				8
+
+/////// type																	// Usage
+typedef struct lua_State lua_State;												// -
+typedef int (*lua_CFunction) (lua_State *L);									// -
+typedef const char * (*lua_Reader) (lua_State *L, void *ud, size_t *sz);		// Adv. Read & Write Lua chunks
+typedef int (*lua_Writer) (lua_State *L, const void* p, size_t sz, void* ud);	// Adv. Read & Write Lua chucks
+typedef void * (*lua_Alloc) (void *ud, void *ptr, size_t osize, size_t nsize);	// Memory Alloc
+typedef LUA_NUMBER lua_Number;													// Number
+typedef LUA_INTEGER lua_Integer;												// Integer
+typedef uint32_t _addr;															// Memory Address
+
+// State <Virtual Machine>
+LUA_API lua_State *(lua_newstate) (lua_Alloc f, void *ud);
+LUA_API void       (lua_close) (lua_State *L);
+//LUA_API lua_State *(lua_newthread) (lua_State *L);
+//LUA_API lua_CFunction (lua_atpanic) (lua_State *L, lua_CFunction panicf);
+
+// Access functions
+LUA_API int             lua_isnumber		(lua_State *L, int idx);				// X
+LUA_API int             lua_isstring		(lua_State *L, int idx);				// X
+LUA_API int             lua_iscfunction		(lua_State *L, int idx);				// X
+LUA_API int             lua_isuserdata		(lua_State *L, int idx);				// X
+LUA_API int             lua_type			(lua_State *L, int idx);				// X
+LUA_API const char     *lua_typename		(lua_State *L, int tp);					// X
+LUA_API int             lua_equal			(lua_State *L, int idx1, int idx2);		// X
+LUA_API int             lua_rawequal		(lua_State *L, int idx1, int idx2);		// X
+LUA_API int             lua_lessthan		(lua_State *L, int idx1, int idx2);		// X
+LUA_API lua_Number      lua_tonumber		(lua_State *L, int idx);				// X
+LUA_API lua_Integer     lua_tointeger		(lua_State *L, int idx);				// X
+LUA_API int             lua_toboolean		(lua_State *L, int idx);				// X
+LUA_API const char     *lua_tolstring		(lua_State *L, int idx, size_t *len);	// X
+LUA_API size_t          lua_objlen			(lua_State *L, int idx);				// X
+LUA_API lua_CFunction   lua_tocfunction		(lua_State *L, int idx);				// X
+LUA_API void	       *lua_touserdata		(lua_State *L, int idx);				// X
+LUA_API lua_State      *lua_tothread		(lua_State *L, int idx);				// X
+LUA_API const void     *lua_topointer		(lua_State *L, int idx);				// X
+
+#include <vector>
+
+enum LuaType {
+	LuaInteger	=	1; // Number merged into integer, fuck all
+	LuaString	=	2;
+	LuaFunction =	3;
+	LuaObject	=	4;
+	LuaTable	=	5;
+	LuaNil		=	6;
+	LuaUsertype	=	7; // Misc.
+};
+
+typedef std::vector<Values>(*FunctionPointer)(const std::vector<Values>);
+
+// Just for debugging and a good backtrace, we don't want a backtrace with full 0x000000... things
+struct _luaBase_VariableInfo {
+	_luaBase_VariableInfo() = default;
+	std::string _name;
+	//std::string _desc; // Useless, but a reason for Variable Info
+};
+
+struct lua_Table;
+
+// Values [Are all lua values]
+struct Values {
+	Values() = default;
+	float val0; // Number
+	std::string val1; // String
+	void *val2; // Must be a pointer to a object
+	FunctionPointer val4; // Address, valid if an function set
+	lua_Table val3;
+	LuaType TYPO; // Type that will be used, other types are GARGABE
+	std::string __varname; // Debug only
+};
+
+enum _lua_IndexMethod {
+	_lua_idxm_nil, // Should throw exception :)
+	_lua_idxm_string,
+	_lua_idxm_integer,
+}
+struct lua_IndexMethod {
+	lua_IndexMethod() = default;
+	lua_IndexMethod(_lua_IndexMethod method = _lua_idxm_nil, size_t h = 0, uint32_t i = 0): idx_typo(method), idx_str_h(h), idx_int(i) {};
+	
+	std::string idx_str;
+	
+	size_t idx_str_h;
+	
+	uint32_t idx_int;
+	_lua_IndexMethod idx_typo;
+};
+
+// TableFields
+struct lua_TableFields {
+	size_t _FIELD_FIRST; // Object is not an valid identifier, we must remember that addressing tables must be fast, so IT WILL BE HASHED
+	void *_FIELD_DATA; // Link to any object
+};
+
+// Memory Address helper; Crucial for the compiled lua code, as it will need a lot of this just to work
+enum _lua_AddrSpecType {
+	_last_Hashed,
+	_last_Integer,
+};
+struct lua_AddrSpec {
+	lua_AddrSpec() = default;
+	lua_AddrSpec(_lua_AddrSpecType t, size_t addr = 0, uint32_t addr2 = 0): Type(t), Addr(addr), Addr2(addr2) {}
+	_lua_AddrSpecType Type;
+	size_t Addr;
+	uint32_t Addr2;
+	_luaBase_VariableInfo Info; // Can be null
+};
+
+// Backtrace Helpers
+struct lua_VarOnMemInfo {
+	lua_VarOnMemInfo(std::string v, size_t a, LuaType type_): varname(v), Addr(a), type(type_) {};
+	lua_VarOnMemInfo() = default;
+	std::string varname;
+	size_t Addr;
+	LuaType type;
+};
+
+// Helper
+extern std::string luaVarInfoToString(lua_VarOnMemInfo data);
+
+// Error handlers
+// This should had a mutexed variable which contains the backtrace of the crash
+enum lua_ErrSignals {
+	// Errors
+	_lua_es_NonFunction,
+	_lua_es_ValueIsNil,
+	_lua_es_NotCorrect,
+	_lua_es_ArgIsProblem,
+	_lua_es_BadString,
+	// Warnings
+	_lua_es_UnknownDataIdx,
+};
+struct lua_ErrHandler {
+	lua_ErrHandler() = default;
+	std::string reason;
+	bool fatal = false;
+	std::mutex mtx;
+};
+class LuaErrorHandler {
+public:
+	LuaErrorHandler(lua_ErrHandler *pipe): m_pipe(pipe) {};
+	void reportError(const lua_ErrSignals signal, const size_t funcid = 9898986555, std::string reason = ""); // If not a function, only throw an reason with a ErrSignal.
+	void reportWarning(const lua_ErrSignals signal, const size_t funcid = 9898986555, std::string reason = "");
+	void setFatal(bool val) { m_pipe->mtx.lock(); m_pipe->fatal=true; m_pipe.unlock(); }
+private:
+	lua_ErrHandler *m_pipe = nullptr;
+};
+
+//TODO: FUCK OFF AND USE RAW MEMORY ADDRESSES FOR NAMING VARIABLES.
+
+// The sauce for the table representation, this represents a single node
+class LuaTableBase {
+public:
+	LuaTableBase(Lua *vm): m_Lua(vm) { m_LuaErrorHandler = m_Lua->m_LuaErrorHandler; };
+	Values getValueIDX(uint32_t val);
+	void *getRawAddrValueIDX(uint32_t val); // This might pass as the getValue value (std::move method) [UNSAGE]
+	Values *getValueAddr(size_t val);
+	//void *getRawAddrValueAddr(size_t val); //Invalid. D>
+	void setValue(lua_AddrSpec pos, Values val); // This doens't check
+	void setValue(lua_AddrSpec pos, Values *val); // This is faster
+	
+	// Table manipulation
+	size_t getSize() { return _Base.size() + _Base2.size(); }
+	void clearTable();
+	
+	// Debugging
+	void linkAddrToInfo(size_t addr, lua_VarOnMemInfo *L_vomi);
+private:
+	std::unordered_map<size_t, Values*> _Base; // Always needs to be hashed, other value that are NOT PERMITTIED will be discarted
+	std::vector<Values*> _Base2; // Otherwise if the vector has not names, like this: { 1, 2, 3 } then it should be indexed by values
+	std::unordered_map<size_t, lua_VarOnMemInfo*> AddrToInfo;
+	
+	Lua *m_Lua = nullptr;
+	LuaErrorHandler *m_LuaErrorHandler = nullptr;
+	
+	// Apply some multithreaded environment
+	//std::mutex m_mtx; //Might should only be mutexted in external environments.
+};
+
+// Table
+enum _lua_TablePos {
+	_lua_tpos_node,
+	_lua_tpos_meta
+};
+struct lua_Table {
+	lua_Table() = default;
+	LuaTableBase *Nodes;
+	LuaTableBase *Meta;
+};
+
+class Lua {
+public:
+	Lua() = default;
+	static lua_State *lua_newstate(lua_Alloc f, void *ud);
+	// Functions
+	//size_t callLuaFunction(lua_State *L, const char *name);  // U S E  T H E  B U N D L E D  C A L L E R .
+	//size_t callLuaFunction(lua_State *L, std::string _F);    // U S E  T H E  B U N D L E D  C A L L E R .
+	std::vector<Values> callLuaFunction(lua_State *L, size_t funcid, std::vector<Values> args); // T H I S .
+	void registerCFunction(FunctionPointer fn, lua_IndexMethod to_index, lua_Table *tbl, _lua_TablePos pos = _lua_tpos_node); // By default, store into the data part, not metatable
+	LuaErrorHandler *m_LuaErrorHandler = nullptr;
+	void setNil(lua_Table *tbl, const lua_IndexMethod place);
+private:
+	lua_Table *m_General = nullptr; // Might be _G
+	
+	std::unordered_map<size_t, FunctionPointer> REGISTERED_FUNCTIONS; // Hashed names with std::hash<std::string || const char*> //NOTE: This will not always has all functions because of collisions, just have the globals
+	std::unordered_map<size_t, StringStruct> REGISTERED_STRINGS;
+	// Some helpers to help the developer get it errors backtrace
+}
+
+// Some misc for API
+typedef Values lua_Value;
+
+// Lexical reader
+
+/*
+*
+* On the lexical part, every line has not limits of characters. BUT: It shouln't jump to another new line if defining something, likely using this '"' character. It will crash.
+* The space should act as a separator some times.
+*
+*/
+
+// I've made new keys, for better scripting, hehe. E N J O Y .
+// When saving a bytecode file, well, compiled, uhm, the code below (those numbers) will be used for better language understanding
+enum _Lua_Lex_Keys {					// Lua Default	|	Addon				| Usable code for scripting | Usage in code lang
+	// Declare Keys						//				|						| ***						| 
+	_L_FUNCTION				=	1,		// function		|	__func				| 001						| 001 "Example"()
+	_L_LOCAL				=	2,		// local		|	__onThisSector		| 002						| 002 "a_variable" <A raw lua value>
+	_L_WHILE				=	3,		// while		|	__loop				| 003						| 003 <A raw lua value, shouln't be a string or number or else: true> "\n"
+	_L_UNTIL				=	4,		// until		|	__cancelOn			| 004						| B} 004
+	_L_FOR					=	5,		// for			|	__getElements		| 005						| 005 B{<007>
+	_L_REPEAT				=	6,		// repeat		|	__loop_until		| 006						| 006 B{<007>
+	// Misc								//				|						| ***						|
+	_L_BOOL					=	7,		// -			|	bool				| 010						| bool Var1 = false		EQUALS TO "var = $"
+	_L_INT					=	8,		// -			|	int					| 011						| int Var1 = 0			EQUALS TO "var = $"
+	_L_STRING2				=	9,		// -			|	string				| 012						| string Var1 = ""		EQUALS TO "var = $"
+	// Lexical Keys						//				|						| ***						| 
+	_L_BlockStart			=	10,		// do			|	B{					| 007						| same
+	_L_BlockEnd				=	11,		// end			|	B}					| 008						| same
+	_L_AND					=	12,		// and			|	&&					| 009						| same
+	_L_ELSE					=	13,		// else			|	|%					| 013						| same
+	_L_ELSEIF				=	14,		// elseif		|	|&					| 014						| same
+	_L_OR					=	15,		// or			|	||					| 015						| same
+	_L_IF					=	16,		// if			|	-					| 016						| !
+	_L_THEN					=	17,		// then			|	-					| 017						| !
+	_L_BREAK				=	18,		// break		|	stop				| 018						| same
+	_L_IN					=	19,		// in			|	-					| 019						| same
+	_L_NIL					=	20,		// nil			|	-					| 020						| !
+	_L_NOT					=	21,		// not			|	!					| 021						| same
+	_L_RETURN				=	22,		// return		|	-					| 022						| same
+	// Some Values			=			//				|						| ***						| 
+	_L_TRUE					=	23,		// true			|	_1					| 023						| same
+	_L_FALSE				=	24,		// false		|	_0					| 024						| same
+	_L_NUMBER				=	25,		// -			|	-					| ***						| !
+	_L_STRING				=	26,		// -			|	-					| ***						| !
+	_L_VARNAME				=	27,		// -			|	-					| ***						| !
+	_L_EOF					=	28,		// -			|	-					| ***						| !
+	// Logical keys						//				|						| ***						|	
+	_L_CONCAT				=	29,		// ..			|	&+					| 025						| same
+	_L_MULTIPLEARGS			=	30,		// ...			|	__args				| 026						| same
+	_L_EQUALS				=	31,		// ==			|	-					| 027						| same
+	_L_EQUALS_OR_MORE		=	32,		// >=			|	__equals_or_more	| 028						| same
+	_L_EQUALS_OR_MINUS		=	33,		// <=			|	__equals_or_minus	| 029						| same
+	_L_DOENST_EQUALS		=	34,		// ~=			|	__doenst_equals		| 030						| same
+	_L_MAX					=	35, // Will be multiplied by 3. > (x * 3) - 14
+	_L_DECLR				=	36, // .KEY. .ARGS/VALUE.
+	_L_ON_TO_GO				=	37, // It must look like this OBJ->kad[()]
+	_L_INCREMENT_VARNUM		=	38, // [VARNUM]++
+	_L_DECREMENT_VARNUM		=	39,
+};
+
+extern const std::string _LuaKeysString[85];
+
+struct LuaLexFrame {
+	LuaLexFrame() = default;
+	LuaLexFrame(_Lua_Lex_Keys KEY): key(KEY) {};
+	_Lua_Lex_Keys key;
+	std::vector<uint8_t> _data; //Contents data
+	std::string header;
+};
+
+struct LuaFuncFrame {
+	LuaFuncFrame() = default;
+	std::vector<LuaLexFrame> _bytecode;
+};
+
+class LuaLex {
+public:
+	LuaLex(Lua *vm): m_Lua(vm) { m_LuaErrorHandler = vm->m_LuaErrorHandler; }
+	void readDataAndloadToLua(std::vector<uint8_t> data);
+protected:
+	LuaLexFrame resolveCommandString(std::vector<uint8_t> *data, std::string __cmd, uint64_t pos);
+private:
+	Lua *m_Lua = nullptr;
+	LuaErrorHandler *m_LuaErrorHandler = nullptr;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,11 +1,12 @@
 # CLua
-A little library and program which compiles lua code to dynamic asm code.
-Made specifically for functions. This can export lua functions to executable CPP/C functions.
-To: <code>casted_lua_func(RDI(uint64_t), RSI(uint64_t), uint64_t*);</code>
-from: <code>lua_func(string1, string2, bool1, bool2, integer1, integer2)</code>
-This is on a developing state, so expect bugs or crashes in final functions nor unions.
+A little library which compiles lua code to dynamic asm code.<br>
+This was made specifically for lua functions so it can export those to executable CPP/C function with no midway interpreter.<br>
+Example:<br>
+To: <code>casted_lua_func(RDI(uint64_t), RSI(uint64_t), uint64_t*);</code><br>
+from: <code>lua_func(string1, string2, bool1, bool2, integer1, integer2)</code><br>
+This is on a developing state, so expect bugs or crashes in final functions nor unions.<br>
 ## API
-This is like the PUC Lua api, with some adds of LuaJIT.
+This is like the PUC Lua api with some adds of LuaJIT.
 Essential:
 `Lua*`
 `Values (uint64_t :: 48bit pointer, 16bit pointer info)`

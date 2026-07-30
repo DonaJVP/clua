@@ -460,7 +460,13 @@ std::vector<LuaLexFrame> simplifyExpression(std::vector<LuaLexFrame> *keys, _SCO
                 if (_00 > 0) {
                     if (!Actual.addr->needToResolveAddr()) {
                         if (_00 == 1) {
-                            LuaType _c0 = getOverallType(now->SEARCH_VAR(act->addr->getHeaderVarString(), false)->howIsUsed);
+                            _VarHeader *_ = now->SEARCH_VAR(act->addr->getHeaderVarString(), false);
+                            if (!_) {
+                                _lastNumberOperand = LuaUnknown;
+                                goto _DECL_VARNAME;
+                            }
+                            auto pHolder = _->howIsUsed;
+                            LuaType _c0 = getOverallType(pHolder);
                             std::cout << "Variable::" << act->addr->getHeaderVarString() << " has type: " << std::to_string(_c0) << std::endl;
                             now->sSearchNaddVal(act, _c0);
                             _lastNumberOperand = _c0;
@@ -472,7 +478,7 @@ std::vector<LuaLexFrame> simplifyExpression(std::vector<LuaLexFrame> *keys, _SCO
                     if (!Actual.addr->needToResolveAddr())
                         now->sSearchVal(act);
                 }
-                
+                _DECL_VARNAME:
                 _VARNAME = true;
                 break;
             }

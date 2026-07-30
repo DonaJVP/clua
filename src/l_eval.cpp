@@ -1437,8 +1437,8 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                         // [Class1 = GPR Proc]
                         a->mov(x86::r10, (uint64_t)std::stoi(std::string(pointer->_data.begin(), pointer->_data.end())));
                         _ASM__movToReg(ret, _ASM__keyInstRestoreVar(ret));
-                        a->mov(x86::r8, (uint64_t)0x0000FFFFFFFFFFFFULL);
-                        a->and_(ret, x86::r8);
+                        //a->mov(x86::r8, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                        //a->and_(ret, x86::r8);
                         _ASM__GPR_Proc(ret, x86::r10, _OPMODE);
                         if (!noTag) {
                             if (!_CPP__areThereOpInstruction(k, pos+1).first) {

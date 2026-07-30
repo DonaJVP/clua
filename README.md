@@ -103,7 +103,8 @@ int main() {
 	((FunctionPointer)_lEnvFunc)(0x0,0x0,nullptr); // Run generated script.
 	// Notice the "Hello World!" ins't printed yet. Their function is generated but not executed.
 	// So let's proceed to execute it.
-	Values node = *(Values*)_F_ASM_NOTGUARANTEED_GETPTR(TBL, _PRINTFUNC);
+	TString *name = returnCompiledString("_sayHelloWorld"); // Compile the function name which we need
+	Values node = *(Values*)_F_ASM_NOTGUARANTEED_GETPTR(TBL, name);
 	// Let's get the function pointer.
 	FunctionPointer func = (FunctionPointer)lua_getPtr(node);
 	func(0,0,nullptr); // There does print Hello World!

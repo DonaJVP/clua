@@ -615,8 +615,8 @@ std::pair<x86::Gp, bool> _ASM__searchSymbolToUse(x86::Gp toGp, TString *sym, lua
                 }
             }
             if (!_0_0_0_CMPTIME_ASM_isScript) {
-                int32_t sK = -512;
-                sK -= ((int32_t)s->slot);
+                int32_t sK = -520;
+                sK -= (s->slot);
                 if (!toModify)
                     a->mov(toGp, x86::qword_ptr(x86::rbp, sK));
                 else
@@ -663,8 +663,8 @@ std::pair<x86::Gp, bool> _ASM__searchSymbolToUse(x86::Gp toGp, TString *sym, lua
                             }
                         }
                         if (!_0_0_0_CMPTIME_ASM_isScript) {
-                            int32_t sK = -512;
-                            sK -= ((int32_t)s->slot);
+                            int32_t sK = -520;
+                            sK -= (s->slot);
                             if (!toModify)
                                 a->mov(toGp, x86::qword_ptr(x86::rbp, sK));
                             else

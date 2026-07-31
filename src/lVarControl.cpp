@@ -1385,7 +1385,7 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     LuaLexFrame _1_cache_1;
     bool _2_FUNC = false; // frame 1 start
     uint16_t scopes__ = 0;
-    uint16_t scopeAtFunc__ = 0;
+    uint16_t scopeAtFunc__ = UINT16_MAX;
     _Lua_Lex_Keys _latestKey = _L_NONE;
     std::string _s;
     
@@ -1491,6 +1491,7 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                     toFocus->push_back(LuaLexFrame(_L_FLAG_CONTINUE_FRAME2));
                     toFocus = &preRes;
                     //toFocus->push_back(AF);
+                    scopeAtFunc__ = UINT16_MAX;
                 } else {
                     goto _BlockEndStagePush;
                 }

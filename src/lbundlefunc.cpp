@@ -622,25 +622,69 @@ void updateVariablesTypes(lua_Scope *SCP) {
     
 }
 
-std::string dumpInfoo(std::vector<LuaLexFrame> S) {
-    std::string _s;
-    _s.append("<> ");
-    for (LuaLexFrame &i: S) {
-        _s.append("$");
-        _s.append(std::to_string(static_cast<int>(i.key)));
-        _s.append(" ");
+std::string preCmpPath(LuaLexFrame path) {
+    std::string toRet;
+    for (LuaLexFrame &i: *path.addr->getData()) {
+        if (i.key == _L_VARNAME)
+            toRet.append(std::string(i._data.begin(), i._data.end()));
+        if (i.key == _L_ON_TO_GO) {
+            toRet.append(".");
+        }
+        if (i.key == _L_EXPRESSION_BRKT) {
+            toRet.append("<ExpressionBracket>");
+        }
     }
-    _s.append(" <>END");
+    return toRet;
+}
+
+std::string dumpInfoo(std::vector<LuaLexFrame> S, bool putEndNOT = false) {
+    std::string _s;
+    if (!putEndNOT)
+        _s.append("<> ");
+    for (LuaLexFrame &i: S) {
+        _s.append("$[");
+        _s.append(std::to_string(static_cast<int>(i.key)));
+        _s.append("]");
+        if (i.key == _L_PATH) {
+            _s.append("::");
+            _s.append(preCmpPath(i));
+            _s.append(":: ");
+            goto _cnt;
+        }
+        if (!i.keystring.empty()) {
+            _s.append("<");
+            _s.append(i.keystring);
+            _s.append(">");
+            if (i.EXPR.size() > 0)
+                _s.append("&");
+            else
+                _s.append(" ");
+        } else {
+            if (i.EXPR.size() > 0)
+                _s.append("&");
+            else
+                _s.append(" ");
+        }
+        if (i.EXPR.size() > 0) {
+            _s.append("{");
+            _s.append(dumpInfoo(i.EXPR.at(0), true));
+            _s.append("} ");
+        }
+        _cnt:
+        asm volatile ( "nop" );
+    }
+    if (!putEndNOT)
+        _s.append(" <>END");
     return _s;
 }
 
 x86::Gp _HELPER_PARSEREGISTER_FROMOFFSET(uint32_t crt) {
     switch (crt) {
-        case 0:
+        case 1:
             return x86::rdi;
-        case 8:
+        case 2:
             return x86::rsi;
-        case 16:
+        case 3:
             return x86::rcx;
     }
 }
@@ -649,6 +693,9 @@ x86::Gp _HELPER_PARSEREGISTER_FROMOFFSET(uint32_t crt) {
 // When this reaches a function, this will ONLY ignore that part and call it self to build.
 std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *pos, lua_Scope *bulldozer, bool _ONLYFUNC, bool _INSIDEAFUNC) {
     // If _ONLYFUNC then it should start on _L_F_ARGS_END
+    std::cout << "KEYS UNOPTIMIZED: " << Keys->size() << " ;;;";
+    std::string _c2 = dumpInfoo(*Keys);
+    std::cout << _c2 << std::endl;
     std::vector<LuaLexFrame> updated = analizeNupdateConstantsNvars(Keys);
     std::cout << "KEYS OPTIMIZED: " << updated.size() << " ;;;";
     std::string _c = dumpInfoo(updated);
@@ -740,9 +787,11 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                 lua_biOpCode c;
                 c.OPCODE = l_b_o_c_SCE;
                 opcodes.push_back(c);
-                if (_ONLYFUNC) {
+                
+                // Function attributes should be given to compiler, so returning opcodes without memory check is obsolete.
+                /*if (_ONLYFUNC) {
                     return opcodes;
-                }
+                }*/
                 // Reverse to blockstart.
                 t_ = &_LastBLOCK->rSCOPE->symbols;
                 updateVariablesUsageLevelToScope(_LastBLOCK);
@@ -787,18 +836,16 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                     _LOCALDEFINED = true;
                     if (!_FRM.multipleway) {
                         LuaLexFrame HEADER = *_FRM.addr->getHeader();
-                        std::cout << std::dec << "LastBlockBaseSlot: " <<_LastBLOCK->base_slot << ", Count=" << _LastBLOCK->count+1 << std::endl;
                         size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
                         _LastBLOCK->count++;
                         lua_localSymbol o;
-                        o.slot = slot-8;
+                        o.slot = slot;
                         o.qID = 2;
                         o.id = std::string(HEADER._data.begin(), HEADER._data.end());
                         _LastBLOCK->symbols.insert(std::pair<std::string, lua_localSymbol>(std::string(HEADER._data.begin(), HEADER._data.end()), o));
-                        _m_offset = slot-8;
+                        _m_offset = slot;
                         if (slot >= to_reserv)
                             to_reserv = slot;
-                        std::cout << "RESERV: " <<to_reserv << " : " << (slot-8) << std::endl;
                         // Include raw data
                         lua_biOpCode c;
                         c.OPCODE = l_b_o_c_STO;
@@ -809,7 +856,7 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                         uint64_t _startpointmem = 0;
                         uint64_t _endpointmem = 0;
                         for (LuaLexFrame &HEADER: _FRM.EXPR_BRKT) { // Theres only labels.
-                            size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
+                            size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+2)*8;
                             if (_startpointmem == 0)
                                 _startpointmem = slot;
                             _LastBLOCK->count = _LastBLOCK->count + 1;
@@ -831,8 +878,6 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                         c.ATR = 1;
                         opcodes.push_back(c);
                     }
-                    if (_FRM.ATTRIB == 0xCF)
-                        abort();
                 } else {
                     lua_biOpCode c;
                     c.OPCODE = l_b_o_c_DEC;
@@ -979,6 +1024,9 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                     startPoint->lSCOPE = std::vector<lua_Scope*>();
                     startPoint->rSCOPE = _LastBLOCK;
                     uint32_t _current = 0;
+                    uint32_t _counter2 = 0;
+                    int32_t rdiPos = 0;
+                    int32_t rsiPos = 0;
                     for (std::vector<LuaLexFrame> &arg: args) {
                         if (arg.size() == 0)
                             continue;
@@ -992,10 +1040,15 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                             LuaLexFrame *LABEL = _LABEL->addr->getHeader();
                             ///
                             lua_localSymbol sym;
-                            sym.qID = 2;
-                            sym.slot = _current*8;
-                            if ((_current*8)<17)
-                                sym.register_ = _HELPER_PARSEREGISTER_FROMOFFSET(_current);
+                            if (_current < 4) {
+                                sym.qID = 2;
+                                sym.slot = (_current+1)*8;
+                                if ((_current*8)<17)
+                                    sym.register_ = _HELPER_PARSEREGISTER_FROMOFFSET(_current+1);
+                            } else {
+                                sym.qID = 9;
+                                sym.slot = _counter2*8;
+                            }
                             sym.id = _LABEL->addr->getHeaderVarString();
                             startPoint->symbols.insert(std::pair<std::string, lua_localSymbol>(sym.id, sym));
                             _current++;
@@ -1003,12 +1056,14 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                     }
                     startPoint->lvl = _current;
                     startPoint->toEXbytes = _current*8;
+                    startPoint->base_slot = 0;
+                    startPoint->count = _current;
+                    startPoint->argPos = _helperLua_ArgsPos{0,8};
                     if (!_ONLYFUNC)
                         startPoint->rSCOPE->_001 = true;
                     //pos++;
-                    uint32_t *_cPos = new uint32_t(0);
-                    std::vector<lua_biOpCode> *OPC = new std::vector<lua_biOpCode>(lua_B_F_OP(&_FRM.EXPR_BRKT, _cPos, startPoint, true, _ONLYFUNC));
-                    delete _cPos;
+                    uint32_t _cPos = 0;
+                    std::vector<lua_biOpCode> *OPC = new std::vector<lua_biOpCode>(lua_B_F_OP(&_FRM.EXPR_BRKT, &_cPos, startPoint, true, _INSIDEAFUNC));
                     lua_biOpCode op;
                     op.OPCODE = l_b_o_c_FUN;
                     op.FuncPTR2 = OPC;
@@ -1042,6 +1097,8 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                 break;
             }
             case _L_FOR: {
+                // Using FOR keyword is an direct usage of Locals.
+                _LOCALDEFINED = true;
                 lua_biOpCode c;
                 // INITIALIZE NEW SCOPE.
                 //Create new scope and allocate.
@@ -1074,7 +1131,7 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                         size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
                         _LastBLOCK->count++;
                         lua_localSymbol o;
-                        o.slot = slot-8;
+                        o.slot = slot;
                         o.qID = 2;
                         o.id = std::string(HEADER._data.begin(), HEADER._data.end());
                         t_->insert(std::pair<std::string, lua_localSymbol>(std::string(HEADER._data.begin(), HEADER._data.end()), o));
@@ -1102,7 +1159,7 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                             size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
                             _LastBLOCK->count++;
                             lua_localSymbol o;
-                            o.slot = slot-8;
+                            o.slot = slot;
                             o.qID = 2;
                             o.id = std::string(HEADER._data.begin(), HEADER._data.end());
                             t_->insert(std::pair<std::string, lua_localSymbol>(std::string(HEADER._data.begin(), HEADER._data.end()), o));
@@ -1115,6 +1172,10 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                        // m_LuaErrorHandler->setFatal(true);
                        // return std::vector<lua_biOpCode>();
                     }
+                } else {
+                    m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("Typing spec error. 'for' keyword arguments are nil!"));
+                    m_LuaErrorHandler->setFatal(true);
+                    return std::vector<lua_biOpCode>();
                 }
                 _ENDZONE:
                 c.OPCODE = l_b_o_c_FOR; 
@@ -1197,13 +1258,11 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
         _LAST_FRAME = _FRM;
     }
     _TERM_:
+    if (_INSIDEAFUNC)
+        abort();
     // SPECIAL NODES
     lua_biOpCode lCf;
-    if (_LOCALDEFINED) {
-        lCf.ATR = 0x1;
-    } else {
-        lCf.ATR = 0x0;
-    }
+    lCf.ATR = _LOCALDEFINED;
     lCf.OPCODE = l_b_o_c_UPV;
     opcodes.push_back(lCf);
     // DEPENDENCIES
@@ -3325,6 +3384,7 @@ static uint64_t PTRMASK = 0x0000FFFFFFFFFFFFULL;
 static uint64_t CNTMASK = 0xFFFF000000000000ULL;
 bool _0_0_0_CMPTIME_ASM_isScript = false;
 void *_0_0_0_CMPTIME_ASM_scriptMem = nullptr;
+int32_t _0_0_0_CMPTIME_ASM_localStackFrameBytes = 0;
 
 // f_mem = force memory get/save
 // tb = save/load
@@ -3389,14 +3449,14 @@ std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_
                     if (lua_Registers.at(_CPP_getRegisterFromASM(var.register_)).cntId == _R_FUNC_ARGS_ENTRY)
                         return {var.register_, x86::noReg};
                 }
-                a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -512));
+                a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -520));
                 _continueSadly:
                 if (tb)
-                    a->lea(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+                    a->lea(x86::rdi, x86::qword_ptr(x86::rsi, -var.slot));
                 else
-                    a->mov(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
+                    a->mov(x86::rdi, x86::qword_ptr(x86::rsi, -var.slot));
                 if (_Both)
-                    a->lea(x86::rsi, x86::qword_ptr(x86::rsi, var.slot));
+                    a->lea(x86::rsi, x86::qword_ptr(x86::rsi, -var.slot));
                 sReg = x86::rsi;
             } else {
                 a->movabs(x86::rsi, (uint64_t)_0_0_0_CMPTIME_ASM_scriptMem);
@@ -3426,6 +3486,12 @@ std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_
             else
                 a->call((uint64_t)_F_ASM_NOTGUARANTEED_GETVALUE);
             a->mov(x86::rdi, x86::rax);
+            break;
+        }
+        case 9: {
+            // Uhhuh.
+            a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -496));
+            a->mov(x86::rdi, x86::qword_ptr(x86::rdi, var.slot));
             break;
         }
     }
@@ -3507,7 +3573,13 @@ static bool _upperVarsNotRequiredHighRegistersSlot = true;
 
 void frontNlowerPushes(x86::Assembler *a, std::vector<lua_biOpCode> *quote, bool way) {
     // Uh oh.
-    if (quote->at(quote->size()-4).ATR == 0) {
+    lua_biOpCode *code = &quote->at(quote->size()-3);
+    if (code->OPCODE != l_b_o_c_UPV) {
+        m_LuaErrorHandler->reportError(_lua_es_UnknownErr, 0, std::string("Expected OpCode{l_b_o_c_UPV=19} doesn't exist at posTotal-3"));
+        m_LuaErrorHandler->reportError(_lua_es_UnknownErr, 0, std::string("Got: ") + std::to_string(code->OPCODE));
+        m_LuaErrorHandler->setFatal(true);
+    }
+    if (code->ATR == 0) {
         if (!way) {
             a->pop(x86::rbx);
         }
@@ -3739,7 +3811,14 @@ std::pair<bool, x86::Gp> areThisVarInHotVars(std::string vname, std::unordered_m
 static void dumpinf(std::vector<lua_biOpCode> *c) {
     std::cout << "BIOPCODES: ";
     for (lua_biOpCode &a: *c) {
-        std::cout << std::to_string(a.OPCODE) << "; ";
+        std::cout << "$(" << std::to_string(a.OPCODE);
+        if (a.OPCODE == l_b_o_c_LXC) {
+            std::cout << ";LXC=$[" << std::to_string(a.KEY) << "]) ";
+        } else if (a.OPCODE == l_b_o_c_UPV) {
+            std::cout << ";SlotsAsRegisters=" << (a.ATR ? "true" : "false") << ") ";
+        } else {
+            std::cout << ") ";
+        }
     }
     std::cout << '\n';
     
@@ -3879,18 +3958,19 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
         uint64_t *p = nullptr;
         uint32_t _offset = s;
         a.sub(x86::rsp, 520 + s); // Cache; 128->256=stackarguments::16args
+        _0_0_0_CMPTIME_ASM_localStackFrameBytes -= 520;
+        _0_0_0_CMPTIME_ASM_localStackFrameBytes -= s;
         a.mov(x86::rcx, (uint64_t)F_MEM_SCR);
-        if (THREADRIPPER->lvl > 0)
-            a.mov(x86::qword_ptr(x86::rbp, -512), x86::rdi);
+        if (THREADRIPPER->lvl >= 1)
+            a.mov(x86::qword_ptr(x86::rbp, -528), x86::rdi);
         else
             goto _saveMem;
-        if (THREADRIPPER->lvl > 1)
-            a.mov(x86::qword_ptr(x86::rbp, -520), x86::rsi);
-        if (THREADRIPPER->lvl > 2)
-            a.mov(x86::qword_ptr(x86::rbp, -24), x86::rcx);
+        if (THREADRIPPER->lvl == 2)
+            a.mov(x86::qword_ptr(x86::rbp, -536), x86::rsi);
         _saveMem:
         if (_allocatedMemorySave)
             a.mov(x86::qword_ptr(x86::rbp, -32), x86::r10);
+        a.mov(x86::qword_ptr(x86::rbp, -496), x86::rcx); // Save pointer in case it are used.
         _0_0_0_CMPTIME_ASM_isScript = false;
     } else { //All locals from script SHOULD be saved in a map.
         a.sub(x86::rsp, 520); // Starting from byte 128 it should be arguments pass, and the starting from 256 should be return place 
@@ -4062,6 +4142,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 break;
             }
             case l_b_o_c_FOR: {
+                
                 // Scope start, has variables in it
                 qlog0._log2("start::For__\n", 0xD);
                 ActualScope = cache.SCOPE;
@@ -4071,6 +4152,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 updateCacheRegisters(&a, ActualScope, symbols);
                 qlog0._log2("mid::For__<UpdateScopeVariables::END>\n");
                 // Calculate which type of expr this has to offer.
+                
                 uint8_t _type = _getForTypeExpression(&cache.p);
                 TString *varname = (TString*)cache.ptr;
                 switch (_type) {
@@ -4084,6 +4166,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         // Let's use our variables.
                         // First, search it.
                         std::pair<x86::Gp, x86::Gp> register_1 = _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(varname, ActualScope, &a, true, false);
+                        qlog0._log2("\033[31m");
                         x86::Gp register_ = register_1.first;
                         // Extract values from the expression.
                         std::vector<int64_t> nms;
@@ -4140,6 +4223,8 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         a.bind(_STARTPOINT);
                         scopeBlocks.push_back(std::pair<Label, Label>(_STARTPOINT, _ENDPOINT));
                         // When reaching _ENDPOINT, must verify if num == final.
+                        qlog0._log2("mid::For__<MainStartScope>\n");
+                        qlog0._log2("\033[0m");
                         break;
                     }
                 }
@@ -4162,6 +4247,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
             }
             case l_b_o_c_SCE: {
                 // Let's see if FOR parent are there
+                qlog0._log2("\033[31m");
                 if (closures.back().closureType == 2) {
                     for_cnt_--;
                     qlog0._log2("end::For__<ReachedPoint>\n");
@@ -4203,6 +4289,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 // Exit scope.
                 ActualScope = ActualScope->rSCOPE;
                 updateCacheRegisters(&a, ActualScope, symbols);
+                qlog0._log2("\033[0m");
                 break;
             }
             case l_b_o_c_STO: {
@@ -4218,7 +4305,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 qlog0._log2("\n");
                 x86::Gp reg = CLUA_EvalExprNReturn(&cache.p.at(0), ActualScope, std::pair<bool, x86::Gp>(true, x86::rcx), false);
                 //_F_ASM_MultiUse_EvalUntil(&cache.p.at(0), &a, ActualScope, _L_NONE, &_);
-                int32_t offset = 512;
+                int32_t offset = 520;
                 offset += cache.toMemOffset;
                 qlog0._log2("Save to PTR\n");
                 if (!Script)

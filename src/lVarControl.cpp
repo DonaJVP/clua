@@ -1369,7 +1369,33 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     nowScope->mainScope = true;
     nowScope->_scopeID = 0;
     
-    bool _0_local = false;
+    uint8_t _0_local = false;
+    uint8_t _1_Path = false;
+    uint8_t _1_Decl = false;
+    uint8_t _1_Func = false;
+    uint8_t _1_Lcal = false;
+    uint8_t _1_Aadr = false;
+    uint8_t _1_ifst = false;
+    uint8_t _1_fors = false;
+    uint8_t _1_whil = false;
+    uint8_t _2_0001 = false;
+    std::vector<LuaLexFrame> preRes;
+    std::vector<LuaLexFrame> *toFocus = &preRes;
+    LuaLexFrame _1_cache_0;
+    LuaLexFrame _1_cache_1;
+    bool _2_FUNC = false; // frame 1 start
+    uint16_t scopes__ = 0;
+    uint16_t scopeAtFunc__ = 0;
+    _Lua_Lex_Keys _latestKey = _L_NONE;
+    std::string _s;
+    
+    // Check _L_FLAG_CONTINUE_FRAME2 flag
+    if (Keys->at(Keys->size()-1).key == _L_FLAG_CONTINUE_FRAME2) {
+        _2_0001 = true;
+        goto _frame2;
+    }
+    
+    
     while (true) {
         try {
             AF = Keys->at(pos);
@@ -1419,6 +1445,12 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                 _0_local = false;
                 break;
             }
+            case _L_NEWLINE: {
+                break;
+            }
+            case _L_SEPARATOR: {
+                break;
+            }
             default: {
                 _0_local = false;
                 NOW.push_back(AF);
@@ -1427,23 +1459,9 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
         pos++;
     }
     
-    bool _1_Path = false;
-    bool _1_Decl = false;
-    bool _1_Func = false;
-    bool _1_Lcal = false;
-    bool _1_Aadr = false;
-    bool _1_ifst = false;
-    bool _1_fors = false;
     pos = 0;
-    std::vector<LuaLexFrame> preRes;
-    std::vector<LuaLexFrame> *toFocus = &preRes;
-    LuaLexFrame _1_cache_0;
-    LuaLexFrame _1_cache_1;
-    bool _2_FUNC = false; // frame 1 start
-    uint16_t scopes__ = 0;
     m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, "- - - - - -");
     m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, std::to_string(NOW.size()).c_str());
-    std::string _s;
     for (LuaLexFrame &C: NOW) {
         _s.append("$[");
         _s.append(std::to_string(C.key));
@@ -1451,6 +1469,7 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     }
     m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, _s.c_str());
     m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, "- - - - - -");
+    
     while (true) {
         try {
             AF = NOW.at(pos);
@@ -1460,30 +1479,41 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
         switch (AF.key) {
             case _L_BlockStart: {
                 // Hoo lee sheet.
-                _1_ifst = false;
-                _1_fors = false;
-                if (_2_FUNC)
+                if (_2_FUNC) {
                     scopes__++;
+                }
                 break;
             }
             case _L_BlockEnd: {
                 scopes__--;
-                if (scopes__ <= 0) {
+                if (scopes__ == scopeAtFunc__) {
                     _2_FUNC = false;
+                    toFocus->push_back(LuaLexFrame(_L_FLAG_CONTINUE_FRAME2));
                     toFocus = &preRes;
-                    toFocus->push_back(AF);
+                    //toFocus->push_back(AF);
                 } else {
-                    goto _BlockEndStage;
+                    goto _BlockEndStagePush;
                 }
                 break;
             }
-            
             case _L_FOR: {
-                _1_fors = true;
+                scopes__++;
+                if (AF.ATTRIB == 1) { // Already populated. Proceed.
+                    goto _BlockEndStagePush;
+                }
+                _1_fors++;
+                _latestKey = _L_FOR;
                 break;
             }
             case _L_IF: {
+                scopes__++;
                 _1_ifst = true;
+                break;
+            }
+            case _L_WHILE: {
+                _1_whil++;
+                scopes__++;
+                _latestKey = _L_WHILE;
                 break;
             }
             case _L_PATH: { // On local declarations this shouldn't exist.
@@ -1502,6 +1532,22 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
             }
             
             case _L_EXPRESSION: {
+                if (_1_whil && _latestKey == _L_WHILE) {
+                    LuaLexFrame _F(_L_WHILE);
+                    _F.EXPR = std::move(computeExpression(AF.EXPR, nowScope, nullptr, true));
+                    toFocus->push_back(_F);
+                    _1_whil--;
+                    break;
+                }
+                if (_1_fors && _latestKey == _L_FOR) {
+                    LuaLexFrame _F(_L_FOR);
+                    _F.EXPR = std::move(computeExpression(AF.EXPR, nowScope, nullptr, true));
+                    toFocus->push_back(_F);
+                    _F.ATTRIB = 1; // Tell other elements this is populated.
+                    _latestKey = _L_NONE;
+                    _1_fors--;
+                    break;
+                }
                 if (_1_Decl && _1_Path) {
                     if (_1_cache_0.multipleway) {
                         LuaLexFrame _DECLR(_L_DECLR_PLUS_DATA);
@@ -1550,6 +1596,8 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                         _FC.local = _1_cache_0.local;
                         toFocus->push_back(_FC);
                         _1_Func = false;
+                        scopeAtFunc__ = scopes__;
+                        scopes__++;
                     }
                     _1_Path = false;
                     _1_Func = false;
@@ -1568,6 +1616,7 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                     _1_Aadr = false;
                     _2_FUNC = true;
                     toFocus = &toFocus->at(toFocus->size()-1).EXPR_BRKT;
+                    scopeAtFunc__ = scopes__;
                     scopes__++;
                 } else if (_1_Path || _1_Aadr) {
                     // Func call.
@@ -1585,11 +1634,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                     _IF.EXPR = computeExpression(AF.EXPR, nowScope);
                     toFocus->push_back(_IF);
                     _1_ifst = false;
-                } else if (_1_fors) {
-                    LuaLexFrame _F(_L_FOR);
-                    _F.EXPR = computeExpression(AF.EXPR, nowScope, nullptr, true);
-                    toFocus->push_back(_F);
-                    _1_fors = false;
                 } else {
                     //preRes.push_back(AF);
                     _1_cache_1 = AF;
@@ -1603,12 +1647,16 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                     toFocus->push_back(_1_cache_0);
                 _1_Decl = false;
                 _1_Path = false;
+                _BlockEndStagePush:
                 toFocus->push_back(AF);
             }
         }
         pos++;
     }
-    
+    _frame2:
+    if (_2_0001) {
+        preRes = std::move(*Keys);
+    }
     pos = 0;
     bool _2_Func = false;
     std::vector<LuaLexFrame> final_;
@@ -1659,7 +1707,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                     //Push some arguments to nowScope.
                     for (std::vector<LuaLexFrame> &a: AF.EXPR) {
                         LuaLexFrame *b = nullptr;
-                        m_LuaErrorHandler->reportError(_lua_es_UnknownErr, 0, "Dull Argument");
                         try {
                             b = &a.at(0);
                         } catch (std::out_of_range &e) {
@@ -1677,7 +1724,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                                     _R.howIsUsed = std::vector<LuaType>(LuaUnknown);
                                     _R._ASSOC_VARS.push_back(b); // Not viable.
                                     nowScope->vars.insert(std::pair<std::string, _VarHeader>(b->addr->getHeaderVarString(), _R));
-                                    m_LuaErrorHandler->reportError(_lua_es_UnknownErr, 0, std::string("VariableAdded> " + b->addr->getHeaderVarString()));
                                 }
                             }
                         }
@@ -1690,7 +1736,7 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                 qPos = &zPos;
                 qVector = &AF.EXPR_BRKT;
                 rVector = &nrVector;
-                pos++;
+                //pos++;
                 goto _reset;
                 break;
             }
@@ -1857,8 +1903,10 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                 now->predessor = nowScope;
                 nowScope->succesors.push_back(now);
                 nowScope = now;
+                nowScope->_scopeID = now->predessor->_scopeID+1;
                 now->LexHeader = &AF;
                 rVector->push_back(AF);
+                //*qPos = *qPos + 1;
                 break;
             }
             case _L_IF: {
@@ -1866,8 +1914,10 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                 now->predessor = nowScope;
                 nowScope->succesors.push_back(now);
                 nowScope = now;
+                nowScope->_scopeID = now->predessor->_scopeID+1;
                 now->LexHeader = &AF;
                 rVector->push_back(AF);
+                //*qPos = *qPos + 1;
                 break;
             }
             //Flags
@@ -1884,7 +1934,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
         }
         *qPos = *qPos + 1;
     }
-    m_LuaErrorHandler->reportWarning(_lua_es_Illegal, 0, "_UPDATE_INSTANCES_000");
     // First the main scope
     _UPDATE_INSTANCES_000(&final_, startScope);
     // Update every sigh of the variable from the scopes to exact LuaLexFrame key
@@ -1892,8 +1941,9 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
         _UPDATE_INSTANCES_001(&final_, scope);
     }
 //     
-    
+    //final_.push_back(LuaLexFrame(_L_FLAG_CONTINUE_FRAME2));
     return final_;
+
 }
 
 

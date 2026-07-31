@@ -428,6 +428,7 @@ enum _Lua_Lex_Keys {					// Lua Default	|	Addon				| Usable code for scripting |
 	_L_OVERALLTYPECHECKER	=	78,
 	// Special CLua keys, which they allow direct manipulation of CLua code generation
 	_L_FLAG_IGNORE_VARCHECK	=	80,
+	_L_FLAG_CONTINUE_FRAME2	=	81,
 };
 
 extern const std::string _LuaKeysString[85];
@@ -518,12 +519,16 @@ struct lua_biOpCodeFexExpr {
 //};
 
 struct lua_localSymbol {
-	size_t slot = 0;
+	int64_t slot = 0;
 	uint8_t qID = 0;
 	uint8_t cacheReg = 0;
 	asmjit::x86::Gp register_ = asmjit::x86::rax;
 	std::string id = "";
 	LuaType type = LuaUnknown;
+};
+struct _helperLua_ArgsPos {
+	int32_t rdi = 0;
+	int32_t rsi = 0;
 };
 using SymbolTable = std::unordered_map<std::string, lua_localSymbol>; // uint64_t = RSP pos
 struct lua_Scope {
@@ -542,6 +547,7 @@ struct lua_Scope {
 	uint32_t lvl = 0;
 	uint32_t count = 0;
 	uint32_t toEXbytes = 0;
+	_helperLua_ArgsPos argPos{0,0};
 	std::unordered_map<std::string, uint32_t> HottestVariables; // Top fourth hottest variables
 	std::vector<std::pair<std::string, uint32_t>> HVtoCompiler;
 	static std::vector<lua_biOpCode> *updateHottestVariablesForKeys(lua_Scope *MAINSCOPE, std::vector<lua_biOpCode> *DTA);
@@ -887,6 +893,7 @@ void lua_initializeRuntime();
 // but thats not the reason, the main reason is i do not want to flood the compiler's function arguments
 extern bool _0_0_0_CMPTIME_ASM_isScript;
 extern void *_0_0_0_CMPTIME_ASM_scriptMem;
+extern int32_t _0_0_0_CMPTIME_ASM_localStackFrameBytes;
 
 asmjit::x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, asmjit::x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD = false, bool noTag = false);
 asmjit::x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, asmjit::x86::Gp ret, lua_Scope *aSCP, bool pointer = false, bool preservRegister = false);

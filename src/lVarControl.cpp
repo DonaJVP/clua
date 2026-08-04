@@ -25,6 +25,9 @@ std::string luaLexFrameKeyToString(_Lua_Lex_Keys k) {
     return "";
 }
 
+#include "ltable.hpp"
+#include "llexiterator.hpp"
+
 //BEGIN lua_AddrPath
 lua_AddrPath::lua_AddrPath() {}
 bool lua_AddrPath::needToResolveAddr() { return (rawAddr.size() > 1); }
@@ -38,7 +41,6 @@ std::string lua_AddrPath::getHeaderVarString() {
 }
 std::vector<LuaLexFrame> *lua_AddrPath::getData() { return &rawAddr; }
 //May include something related.
-LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos);
 LuaLexFrame makeSingleExprP(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
     // Parenthesis
     LuaLexFrame res = LuaLexFrame(_L_EXPRESSION);
@@ -55,6 +57,14 @@ LuaLexFrame makeSingleExprP(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
             return res;
         }
         switch (cache.key) {
+            case _L_TABLE_END: {
+                break;
+            }
+            case _L_TABLE_START: {
+                *pos = *pos + 1;
+                contents.at(level).push_back(makeSingleTable(keys, pos));
+                break;
+            }
             case _L_VARNAME: {
                 LuaLexFrame path = makeSinglePath(keys, pos);
                 contents.at(level).push_back(path);
@@ -97,6 +107,9 @@ LuaLexFrame makeSingleExprB(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
         try {
             cache = keys->at(*pos);
         } catch (std::out_of_range &e) {
+            res.declr = cache.declr;
+            res.EXPR_BRKT = contents;
+            res.key = _L_EXPRESSION_BRKT;
             return res;
         }
         switch (cache.key) {
@@ -178,6 +191,8 @@ LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
         *pos = *pos + 1;
     }
     _END_:
+    toRet.key = _L_PATH;
+    toRet.addr = addr;
     toRet.addr->getBack()->_LK = true;
     return toRet;
 }
@@ -732,102 +747,45 @@ std::vector<LuaLexFrame> simplifyExpression(std::vector<LuaLexFrame> *keys, _SCO
 
 // Get expr value
 
-LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *scope = nullptr) {
+LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *scope, bool _returnEmptyIfVariables) {
     LuaLexFrame cache0(_L_NONE);
     uint32_t *to_it = new uint32_t(0);
     _Lua_Lex_Keys M_OP = _L_NONE;
     bool cnt = false;
     bool vnm = false;
     LuaLexFrame getted(_L_NONE);
+    bool _0_hNumberDef = false;
     while (true) {
         try {
             cache0 = k->at(*pos);
         } catch (std::out_of_range &e) {
-            return cache0;
+            return getted;
         }
-        //
         // Arithmetic
         if (cache0.key >= 40 && cache0.key <= 45) {
             M_OP = cache0.key;
             continue;
         }
         switch (cache0.key) {
+            case _L_FALSE: {
+                getted = cache0;
+                break;
+            }
+            case _L_TRUE: {
+                getted = cache0;
+                break;
+            }
             case _L_PATH: {
                 vnm = true;
+                if (_returnEmptyIfVariables) {
+                    return LuaLexFrame(_L_NONE);
+                }
                 break;
             }
             case _L_EXPRESSION: {
                 uint32_t _0 = 0;
-                LuaLexFrame f = getExprValue(k, &_0, scope);
-            }
-            // Special value
-            case _L_F_ARGS_START: {
-                pos++;
-                LuaLexFrame f = getExprValue(k, pos, scope);
-                // Okey okey
-                if (f.key == _L_NOP) {
-                    return f;
-                }
-                if (vnm) {
-                    return LuaLexFrame(_L_NOP);
-                }
-                if (M_OP != _L_NONE && f.key != _L_NUMBER) {
-                    m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, "Mixing not a number with number");
-                    m_LuaErrorHandler->setFatal(true);
-                    return LuaLexFrame(_L_NOP);
-                }
-                if (M_OP != _L_NONE) {
-                    // Get value of the firstest.
-                    std::vector<uint8_t> _0 = getted._data;
-                    std::vector<uint8_t> _1 = f._data;
-                    //Transform to real data.
-                    double _0_0 = std::stod(std::string(_0.begin(), _0.end()));
-                    double _1_0 = std::stod(std::string(_1.begin(), _1.end()));
-                    switch (M_OP) {
-                        case _L_SYNTAX_DEC: {
-                            _0_0 = _0_0 - _1_0;
-                            break;
-                        }
-                        case _L_SYNTAX_DIV: {
-                            _0_0 = _0_0 / _1_0;
-                            break;
-                        }
-                        case _L_SYNTAX_MUL: {
-                            _0_0 = _0_0 * _1_0;
-                            break;
-                        }
-                        case _L_SYNTAX_SUM: {
-                            _0_0 = _0_0 + _1_0;
-                            break;
-                        }
-                        default: {
-                            m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, "Unrecognized command for Arithmetic operation: " + std::to_string(M_OP));
-                            m_LuaErrorHandler->setFatal(true);
-                            return LuaLexFrame(_L_NOP);
-                        }
-                    }
-                    // Mod getted
-                    std::string _DATA = std::to_string(_0_0);
-                    getted._data = std::vector<uint8_t>(_DATA.begin(), _DATA.end());
-                    M_OP = _L_NONE; // Reset.
-                    break;
-                }
-                if (cnt) {
-                    if (f.key != _L_STRING) {
-                        m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, "Mixing not a string with string");
-                        m_LuaErrorHandler->setFatal(true);
-                        return LuaLexFrame(_L_NOP);
-                    }
-                    // Proceed
-                    std::string a = std::string(getted._data.begin(), getted._data.end());
-                    std::string b = std::string(f._data.begin(), f._data.end());
-                    std::string r = a + b;
-                    // Mod getted
-                    getted._data = std::vector<uint8_t>(r.begin(), r.end());
-                    cnt = false;
-                    break;
-                }
-                getted = f;
+                LuaLexFrame f = getExprValue(k, &_0, scope, _returnEmptyIfVariables);
+                break;
             }
             // Arithmetic
             case _L_NUMBER: {
@@ -836,6 +794,7 @@ LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *
                     m_LuaErrorHandler->setFatal(true);
                     return LuaLexFrame(_L_NOP);
                 }
+                getted.ATTRIB = cache0.ATTRIB & _0_hNumberDef;
                 if (M_OP != _L_NONE) {
                     // Get value of the firstest.
                     std::vector<uint8_t> _0 = getted._data;
@@ -895,6 +854,7 @@ LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *
                     std::string c = a + b;
                     // Save
                     getted._data = std::vector<uint8_t>(c.begin(), c.end());
+                    getted.key = _L_STRING;
                     // Reset some vars
                     cnt = false;
                 }
@@ -904,17 +864,13 @@ LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *
                 cnt = true;
                 break;
             }
-            case _L_ON_TO_GO_END: {
-                return getted;
-            }
-            case _L_F_ARGS_END: {
-                return getted;
-            }
             // Other
             default: {
                 return getted;
             }
         }
+        if (cache0.key == _L_NUMBER && cache0.ATTRIB)
+            _0_hNumberDef = true;
         *pos = *pos + 1;
     }
 }
@@ -1477,6 +1433,14 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
             break;
         }
         switch (AF.key) {
+            case _L_TABLE_END: {
+                break; // A pot.
+            }
+            case _L_TABLE_START: {
+                m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, "Missed variable to store table?");
+                m_LuaErrorHandler->setFatal(true);
+                break;
+            }
             case _L_BlockStart: {
                 // Hoo lee sheet.
                 if (_2_FUNC) {
@@ -1597,6 +1561,11 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                         _FC.local = _1_cache_0.local;
                         toFocus->push_back(_FC);
                         _1_Func = false;
+                        _1_Path = false;
+                        _1_Lcal = false;
+                        _1_Decl = false;
+                        _1_Aadr = false;
+                        _2_FUNC = true;
                         scopeAtFunc__ = scopes__;
                         scopes__++;
                     }

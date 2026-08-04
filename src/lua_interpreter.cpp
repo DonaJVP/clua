@@ -361,7 +361,12 @@ std::vector<LuaLexFrame> LuaLex::ParserSecondStage(std::vector<std::string> data
 			}
 			continue;
 		}
-		_on_bidir_002 = false;
+		if (_on_bidir_002) {
+			goto _insertOnToGoEnd;
+			_JMP0:
+			_on_bidir_002 = false;
+		}
+		
 		if (_big_string) {
 			cache.append(key);
 			continue;
@@ -848,8 +853,11 @@ _GARGABE:
 			goto _FLUSH;
 		}
 		if (key == "]") {
+			_insertOnToGoEnd:
 			LuaLexFrame _K(_L_ON_TO_GO_END);
 			blocks.push_back(_K);
+			if (_on_bidir_002)
+				goto _JMP0;
 			goto _FLUSH;
 		}
 		if (key == "..") {

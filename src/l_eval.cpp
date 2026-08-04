@@ -1,4 +1,5 @@
 #include "lua.hpp"
+#include "ltable.hpp"
 #include <csignal>
 #include <cstdint>
 #include <asmjit/core.h>
@@ -27,6 +28,14 @@ void initializeRegistersData(void *asmPtr) {
     lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_RCX, _REGISTER_{REG_RCX,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
     lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_RDI, _REGISTER_{REG_RDI,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
     lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_RDX, _REGISTER_{REG_RDX,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
+    lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R10, _REGISTER_{REG_R10,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
+    lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R11, _REGISTER_{REG_R11,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
+    lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R12, _REGISTER_{REG_R12,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
+    lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R13, _REGISTER_{REG_R13,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
+    lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R14, _REGISTER_{REG_R14,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
+    lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R15, _REGISTER_{REG_R15,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
+    lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R8, _REGISTER_{REG_R8,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
+    lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R9, _REGISTER_{REG_R9,0x0,0,0,LuaUnknown,_R_TRASHDATA,nothing}));
     //lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R10, _REGISTER_{REG_R10,0x0,nullptr,LuaUnknown,_R_TRASHDATA}));
     //lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_R11, _REGISTER_{REG_R11,0x0,nullptr,LuaUnknown,_R_TRASHDATA}));
     //lua_Registers.insert(std::pair<greg_t, _REGISTER_>(REG_RBX, _REGISTER_{_R_TRASHDATA,REG_RBX,0x0,nullptr,LuaUnknown}));
@@ -82,7 +91,16 @@ void _CPP__turnRegistersAfterCall() {
     lua_Registers.at(REG_RDI).cntId = _R_TRASHDATA;
     lua_Registers.at(REG_RSI).cntId = _R_TRASHDATA;
     lua_Registers.at(REG_RCX).cntId = _R_TRASHDATA;
+    lua_Registers.at(REG_RDX).cntId = _R_TRASHDATA;
     lua_Registers.at(REG_RAX).cntId = _R_FUNC_RESULT;
+    lua_Registers.at(REG_R10).cntId = _R_TRASHDATA;
+    lua_Registers.at(REG_R11).cntId = _R_TRASHDATA;
+    //lua_Registers.at(REG_R12).cntId = _R_TRASHDATA;
+    //lua_Registers.at(REG_R13).cntId = _R_TRASHDATA;
+    //lua_Registers.at(REG_R14).cntId = _R_TRASHDATA;
+    //lua_Registers.at(REG_R15).cntId = _R_TRASHDATA;
+    lua_Registers.at(REG_R8).cntId = _R_TRASHDATA;
+    lua_Registers.at(REG_R9).cntId = _R_TRASHDATA;
     // GUH
     lua_RegistersXMM.at(xmm0).cntId = _R_TRASHDATA;
     lua_RegistersXMM.at(xmm1).cntId = _R_TRASHDATA;
@@ -182,45 +200,54 @@ void _ASM_CLBK__saveFirstXMMregister() {
 
 uint64_t _ASMH__makeCoolTypeCMPROR(LuaType type) {
     // Pass a strong and cool uinteger just to compare with the TAG_MASK
-    uint64_t base = 0x0000000000000000ULL | type << 48;
+    uint64_t base = 0x7FF0000000000000ULL | type << 48;
     // 3 integers + 1;
     // left
     return base;
 }
 
 x86::Gp _ASM__cmpVarType(x86::Gp base, LuaType toType) {
-    x86::Gp cc = base;
     uint64_t tCMP = _ASMH__makeCoolTypeCMPROR(toType);
-    a->movabs(x86::r10, tCMP);
-    a->cmp(base, x86::r10);
+    uint64_t tCMP_ = 0xFFFF000000000000ULL;
+    a->mov(x86::r10, base);
+    a->mov(x86::r8, tCMP_);
+    a->and_(x86::r10, x86::r8);
+    a->mov(x86::r8, tCMP);
+    a->cmp(x86::r10, x86::r8);
+    return base;
 }
 
 void _ASM__getFromTableIndex(uint8_t mode, x86::Gp baseTable0, uint64_t baseTable1, x86::Gp regCounter, uint32_t regCounter0, x86::Gp ret, bool getPtr = false) {
     if (mode == 1) { // Registers based
-        Label _of = a->new_named_label("overflow");
-        Label _end = a->new_named_label("_END__");
-        a->mov(x86::r11, x86::qword_ptr(baseTable0, offsetof(lua_Table, asize)));
-        a->cmp(x86::r11, regCounter);
-        a->ja(_of);
+        Label _of = a->new_label();
+        Label _end = a->new_label();
+        // Even if it came from lua side. Dec it a little.
+        a->dec(regCounter);
+        a->mov(x86::r11, x86::qword_ptr(baseTable0, offsetof(lua_Table, used_on_amap)));
+        a->cmp(regCounter, x86::r11);
+        a->jae(_of);
         a->mov(x86::r11, x86::qword_ptr(baseTable0, offsetof(lua_Table, array)));
-        a->lea(x86::r10, x86::qword_ptr(0,regCounter,8)); // I do not want to use MUL neither IMUL.
+        a->mov(x86::r10, 0x8);
+        a->mul(x86::r10);
         if (!getPtr)
-            a->mov(ret, x86::qword_ptr(x86::r11, x86::r10));
+            a->mov(ret, x86::qword_ptr(x86::r11, x86::rax));
         else
-            a->lea(ret, x86::qword_ptr(x86::r11, x86::r10));
+            a->lea(ret, x86::qword_ptr(x86::r11, x86::rax));
         a->jmp(_end);
         a->bind(_of);
         a->mov(ret, 0);
+        a->bind(_end);
     } else {
         // meth.
-        Label _of = a->new_named_label("overflow");
-        Label _end = a->new_named_label("_END__");
+        Label _of = a->new_label();
+        Label _end = a->new_label();
         a->movabs(x86::r10, baseTable1);
-        a->mov(x86::r11, x86::qword_ptr(x86::r10, offsetof(lua_Table, asize)));
-        a->cmp(x86::r11, regCounter0); // Inserted as an imm32
-        a->ja(_of);
+        a->mov(x86::r8, regCounter0);
+        a->mov(x86::r11, x86::qword_ptr(x86::r10, offsetof(lua_Table, used_on_amap)));
+        a->cmp(x86::r8, x86::r11); // Inserted as an imm32
+        a->jae(_of);
         a->mov(x86::r11, x86::qword_ptr(baseTable0, offsetof(lua_Table, array)));
-        a->mov(x86::r10, regCounter0*8); // I do not want to use MUL neither IMUL.
+        a->mov(x86::r10, regCounter0*8);
         if (!getPtr)
             a->mov(ret, x86::qword_ptr(x86::r11, x86::r10));
         else
@@ -228,6 +255,7 @@ void _ASM__getFromTableIndex(uint8_t mode, x86::Gp baseTable0, uint64_t baseTabl
         a->jmp(_end);
         a->bind(_of);
         a->mov(ret, 0);
+        a->bind(_end);
     }
 }
 
@@ -386,12 +414,7 @@ extern "C" {
 }
 // Just for saving contents...
 // INSERT METALLIC MADNESS HERE
-void _ASMH__rs_searchInTable(
-    x86::Gp tblPTR,
-    std::pair<bool, std::pair<x86::Gp, TString*>> key,
-    x86::Gp toGp,
-    bool pointer = false
-) {
+void _ASMH__rs_searchInTable(x86::Gp tblPTR, std::pair<bool, std::pair<x86::Gp, TString*>> key, x86::Gp toGp, bool pointer) {
     // Oof.
     if (lua_Registers.at(REG_RDI).cntId == _R_FUNC_ARGS) {
         // Should save it?
@@ -410,6 +433,17 @@ void _ASMH__rs_searchInTable(
     lua_Registers.at(REG_RAX).cntId = _R_TRASHDATA;
     lua_Registers.at(REG_RDX).cntId = _R_TRASHDATA;
     qlog0._log2("start::searchInTable\n", 21);
+    // DEBUG SECTION.
+    if (pointer)
+        qlog0._log2("#_SAVE_# for variable[");
+    else
+        qlog0._log2("#_LOAD_# for variable[");
+    if (key.second.second != nullptr) {
+        qlog0._log2(key.second.second->data, key.second.second->len);
+    } else {
+        qlog0._log2("<register>");
+    }
+    qlog0._log2("]\n");
     Label _nf = a->new_label();
     Label _f = a->new_label();
     Label _loop = a->new_label();
@@ -432,6 +466,8 @@ void _ASMH__rs_searchInTable(
         a->mov(x86::rdi, x86::r8);
     else
         a->mov(x86::rdi, (uint64_t)key.second.second);
+    
+    _HELPER__runHooksFor(x86::r9, _R_CLUATYPE_UNTAGGED);
     
     // idx = hash & mask
     a->and_(x86::r8, x86::qword_ptr(x86::r9, offsetof(lua_Table, hmask)));
@@ -523,6 +559,17 @@ void _ASMH__rs_searchInTable(
     //endzone:
     a->bind(_end);
     qlog0._log2("end::searchInTable\n", 19);
+    // DEBUG SECTION.
+    if (pointer)
+        qlog0._log2("END; #_SAVE_# for variable[");
+    else
+        qlog0._log2("END; #_LOAD_# for variable[");
+    if (key.second.second != nullptr) {
+        qlog0._log2(key.second.second->data, key.second.second->len);
+    } else {
+        qlog0._log2("<register>");
+    }
+    qlog0._log2("]\n");
 }
 /*
 void _ASMH__rs_searchInTable(x86::Gp tblPTR, std::pair<bool, std::pair<x86::Gp, TString*>> key, x86::Gp toGp, bool pointer = false) {
@@ -588,6 +635,7 @@ void _ASM__getContentsFromMGENERAL(TString *key, x86::Gp toGp, bool modify = fal
     // r8, r9 and rsi
     // Store IDX and 'and' it with hmask
     // Simple.
+    _HELPER__runHooksFor(x86::r9, _R_TABLE_POINTER);
     a->mov(x86::r9, (uint64_t)m_General);
     _ASMH__rs_searchInTable(x86::noReg, std::pair<bool, std::pair<x86::Gp, TString*>>(false, std::pair<x86::Gp, TString*>(x86::noReg, key)), toGp, modify);
 }
@@ -622,6 +670,7 @@ std::pair<x86::Gp, bool> _ASM__searchSymbolToUse(x86::Gp toGp, TString *sym, lua
                 else
                     a->lea(toGp, x86::qword_ptr(x86::rbp, sK));
             } else {
+                _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
                 a->movabs(x86::r9, (uint64_t)_0_0_0_CMPTIME_ASM_scriptMem);
                 if (!toModify)
                     a->mov(toGp, x86::qword_ptr(x86::r9, s->slot));
@@ -670,6 +719,7 @@ std::pair<x86::Gp, bool> _ASM__searchSymbolToUse(x86::Gp toGp, TString *sym, lua
                             else
                                 a->lea(toGp, x86::qword_ptr(x86::rbp, sK));
                         } else {
+                            _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
                             a->movabs(x86::r9, (uint64_t)_0_0_0_CMPTIME_ASM_scriptMem);
                             if (!toModify)
                                 a->mov(toGp, x86::qword_ptr(x86::r9, s->slot));
@@ -786,6 +836,7 @@ x86::Gp _ASM__runOpCode(_Lua_Lex_Keys opcode, x86::Gp op0, x86::Gp op1, bool che
                 noString = a->new_label();
                 a->mov(x86::r11, (uint64_t)0x000F000000000000ULL);
                 a->and_(x86::r11, x86::r8);
+                _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
                 a->mov(x86::r9, (uint64_t)L_ASM_Stri);
                 a->cmp(x86::r11, x86::r9);
                 a->jne(noString);
@@ -835,7 +886,7 @@ std::pair<bool, uint8_t> _CPP__emittedAnyOpcode(_Lua_Lex_Keys c) {
 }
 
 void _ASM_crashINSTR(lua_ErrSignals signal) {
-    abort();
+    a->ud2();
 }
 
 //x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD = false);
@@ -925,15 +976,18 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
             case _L_EXPRESSION_BRKT: {
                 // Save ret just for later [Access!]
                 uint64_t baseMem = (uint64_t)malloc(8);
+                _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
+                a->movabs(x86::r11, 0x0000FFFFFFFFFFFFULL);
                 a->movabs(x86::r9, baseMem);
+                a->and_(act, x86::r11);
                 a->mov(x86::qword_ptr(x86::r9), act);
                 x86::Gp ret0 = CLUA_EvalExprNReturn(&actual->EXPR_BRKT, aSCP, std::pair<bool, x86::Gp>(false, x86::noReg), false);
                 // Eval.
                 // Should be: Int/Double, string or nil
-                Label _f = a->new_named_label("notString_NumberOrDouble");
-                Label number__ = a->new_named_label("NotNumber__");
-                Label _f2 = a->new_named_label("Nothing__");
-                Label _f3 = a->new_named_label("END__");
+                Label _f = a->new_label();
+                Label number__ = a->new_label();
+                Label _f2 = a->new_label();
+                Label _f3 = a->new_label();
                 _ASM__cmpVarType(ret0, LuaString);
                 a->jne(_f);
                 // Should either.. Search?
@@ -942,7 +996,7 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                 a->mov(x86::r9, x86::qword_ptr(x86::r9));
                 a->mov(x86::r8, ret0);
                 a->movabs(x86::r11, 0x0000FFFFFFFFFFFFULL);
-                a->and_(x86::r11, x86::r8);
+                a->and_(x86::r8, x86::r11);
                 _ASMH__rs_searchInTable(x86::noReg, std::pair<bool, std::pair<x86::Gp, TString*>>(true, std::pair<x86::Gp, TString*>(x86::r8, nullptr)), act);
                 a->jmp(_f3);
                 a->bind(_f);
@@ -952,13 +1006,15 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                 _ASM__cmpVarType(ret0, LuaNumber);
                 a->jne(number__);
                 // Hell.
-                _ASMH__doLuaNumberToInteger(ret0);
-                _ASM__getFromTableIndex(1, x86::r9, 0x0, ret0, 0x0, ret, false);
+                _ASMH__doLuaNumberToInteger(ret0); // No need for mask.
+                _ASM__getFromTableIndex(1, x86::r9, 0x0, ret0, 0x0, ret, pointer);
                 a->jmp(_f3);
                 a->bind(number__);
                 _ASM__cmpVarType(ret0, LuaInteger);
                 a->jne(_f2);
-                _ASM__getFromTableIndex(1, x86::r9, 0x0, ret0, 0x0, ret, false);
+                a->movabs(x86::r11, 0x0000FFFFFFFFFFFFULL);
+                a->and_(ret0, x86::r11);
+                _ASM__getFromTableIndex(1, x86::r9, 0x0, ret0, 0x0, ret, pointer);
                 a->jmp(_f3);
                 a->bind(_f2);
                 //Crash [Nil]
@@ -984,9 +1040,13 @@ std::pair<bool, uint8_t> _CPP__areThereOpInstruction(std::vector<LuaLexFrame> *l
 
 
 
-x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD, bool noTag) {
+x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD, bool noTag, std::pair<uint32_t*, _Lua_Lex_Keys> middleCheck) {
     LuaLexFrame *pointer = nullptr;
-    uint32_t pos = 0;
+    bool _usePointer = false;
+    if (middleCheck.first != nullptr)
+        _usePointer = true;
+    _Lua_Lex_Keys stopAt = middleCheck.second;
+    uint32_t pos = _usePointer ? *middleCheck.first : 0;
     x86::Gp ret = saveSpecificallyTo.first ? saveSpecificallyTo.second : x86::rax;
     bool _setReg = false;
     x86::Gp q0 = x86::noReg;
@@ -1005,8 +1065,19 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
             pointer = &k->at(pos);
         } catch (std::out_of_range &e) {
             queue.clear();
-            if (q0 != x86::noReg)
+            if (q0 != x86::noReg) {
+                if (_usePointer)
+                    *middleCheck.first = pos;
                 return q0;
+            }
+            if (_usePointer)
+                *middleCheck.first = pos;
+            return ret;
+        }
+        if (stopAt == pointer->key) {
+            _ASM__movToReg(ret, _ASM__keyInstRestoreVar(ret));
+            if (_usePointer)
+                *middleCheck.first = pos;
             return ret;
         }
         std::pair<bool, uint8_t> eao = _CPP__emittedAnyOpcode(pointer->key);
@@ -1022,6 +1093,23 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
             continue;
         }
         switch (pointer->key) {
+            case _L_NIL: {
+                
+                break;
+            }
+            case _L_TABLE: {
+                std::pair<bool, lua_Table*> _res = _LTABLE_HELPER__buildTable(&pointer->EXPR_BRKT, (uint64_t)scope);
+                if (!_res.first) {
+                    // Generate it via asm (online)
+                    x86::Gp regist = lua_genTable__Online(&pointer->EXPR_BRKT, scope, pointer->ATTRIB, nullptr);
+                    _ASM__movToReg(ret, regist);
+                } else {
+                    // Generated in compile time.
+                    Values val = lua_makeVar(_res.second, LuaTable);
+                    a->mov(ret, val);
+                }
+                break;
+            }
             case _L_NOT: {
                 _notOpCode = !_notOpCode;
                 break;
@@ -1104,6 +1192,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                         uint64_t ptr0 = (uint64_t)(new uint64_t(0));
                         x86::Gp path = _ASM__getPathToSelGp(pointer->addr->getData(), ret, scope, getPointerInsteadofRawD, true);
                         a->movabs(x86::r9, ptr0);
+                        _HELPER__runHooksFor(x86::r9, _R_CLUATYPE_TAGGED);
                         a->mov(x86::qword_ptr(x86::r9), path);
                         _F_ASM_MAKEFUNCTIONARGUMENTS(&pointer->EXPR, a, scope, false, 0);
                         a->movabs(x86::r9, ptr0);
@@ -1198,6 +1287,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                         if (_emitted_xmmOCX) {
                             if (lua_RegistersXMM.at(xmm0).cntId == _R_TRASHDATA) {
                                 a->mov(x86::r9, x86::qword_ptr(x86::rbp, lua_RegistersXMM.at(xmm0).stackPtrBase)); // It is weird.
+                                _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
                                 a->movd(x86::xmm0, x86::r9);
                             }
                         } else {
@@ -1253,6 +1343,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                         Label _isNumber = a->new_label();
                         Label _end = a->new_label();
                         a->mov(x86::r8, path);
+                        _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
                         a->movabs(x86::r9, (uint64_t)0x7FF0000000000000ULL);
                         a->and_(x86::r8, x86::r9);
                         a->mov(x86::r10, ret);
@@ -1334,6 +1425,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                     a->movabs(ret, (uint64_t)lua_makeVar(pointer->a, LuaString));
                 } else {
                     // Darker yet darker.
+                    _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
                     a->movabs(x86::r9, (uint64_t)lua_makeVar(pointer->a, LuaString));
                     //a->ud2();
                     x86::Gp to_use = q0 == x86::noReg ? ret : q0;
@@ -1355,6 +1447,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
             
             case _L_NUMBER: {
                 // Insert those typos.
+                _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
                 if (_OPMODE == _L_NONE) {
                     if (!_CPP__areThereOpInstruction(k, pos+1).first) {
                         if (pointer->ATTRIB) {

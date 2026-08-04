@@ -976,6 +976,10 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
             case _L_EXPRESSION_BRKT: {
                 // Save ret just for later [Access!]
                 uint64_t baseMem = (uint64_t)malloc(8);
+                if (pointer) {
+                    // Should restore their table poitner state rather than being a slot pointer.
+                    a->mov(act, x86::qword_ptr(act));
+                }
                 _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
                 a->movabs(x86::r11, 0x0000FFFFFFFFFFFFULL);
                 a->movabs(x86::r9, baseMem);

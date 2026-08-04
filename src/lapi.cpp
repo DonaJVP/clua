@@ -108,6 +108,7 @@ TString *returnCompiledString(std::string N) {
 	
 	OBJ = new TString();
 	OBJ->IDX = murmur3_32(N.data(), N.size(), luaSeed);
+	std::cout << "Generated IDX for " << N << " is " << OBJ->IDX << std::endl;
 	OBJ->data = new char[N.size()+1];
 	memcpy(OBJ->data, N.data(), N.size());
 	OBJ->len = N.size();

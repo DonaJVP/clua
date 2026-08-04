@@ -1069,6 +1069,7 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                     op.FuncPTR2 = OPC;
                     op.SCOPE = startPoint;
                     op.path = _FRM.addr;
+                    op.ATR = _FRM.ATTRIB;
                     op._F_LOCAL = _FRM.local;
                     opcodes.push_back(op);
                 } else {
@@ -4327,9 +4328,6 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
             }
             case l_b_o_c_FUN: {
                 qlog0._log2("FunctionGeneration:Start\n");
-                if (_LK == l_b_o_c_DEC) {
-                    a.mov(x86::qword_ptr(x86::rsp, -248), x86::rax); // Save the direction.
-                }
                 a.mov(x86::rdi, (uint64_t)cache.FuncPTR2);
                 a.mov(x86::rsi, (uint64_t)cache.SCOPE);
                 a.mov(x86::rdx, (uint64_t)true);
@@ -4341,7 +4339,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 a.mov(x86::rbx, x86::rax);
                 x86::Gp uGp = _ASM__getPathToSelGp(cache.path->getData(), x86::rdx, ActualScope, true);
                 a.mov(x86::qword_ptr(uGp), x86::rbx);
-                qlog0._log2("FunctionGeneration:SaveEnd\n");
+                qlog0._log2("FunctionGeneration:SaveEnd\n\n");
                 // Save function
                 if (cache._F_LOCAL) {
                     

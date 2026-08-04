@@ -549,18 +549,22 @@ static Values PRINT(Values RDI, Values RSI, FuncArgs *ARGS) { // Classic start.
 int64_t clua_cCalcTimeMS() {
 	struct timespec now;
 	// Use TIME_UTC to measure time since the Epoch
-	timespec_get(&now, TIME_UTC); 
+	timespec_get(&now, TIME_UTC);
+	uint64_t v = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
 	// Convert seconds to milliseconds and add milliseconds from nanoseconds
-	return ((int64_t)now.tv_sec) * 1000 + ((int64_t)now.tv_nsec) / 1000000;
+	return v;//((int64_t)now.tv_sec) * 1000 + ((int64_t)now.tv_nsec) / 1000000;
 }
-static int64_t start = 0;
+static uint64_t start = 0;
 static bool started = false;
 static void calcTime() {
 	if (!started) {
 		start = clua_cCalcTimeMS();
 		started = !started;
 	} else  {
-		std::cout << "Records are: " << std::to_string(clua_cCalcTimeMS() - start) << std::endl;
+		struct timespec now;
+		timespec_get(&now, TIME_UTC);
+		uint64_t v = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
+		std::cout << "Records are: " << std::to_string(v - start) << std::endl;
 		started = false;
 	}
 }

@@ -463,6 +463,12 @@ std::vector<LuaLexFrame> LuaLex::ParserSecondStage(std::vector<std::string> data
 			goto _FLUSH;
 		}
 		
+		if (key == "_CLUA@ConstTable") {
+			LuaLexFrame _K(_L_CONSTTABLE);
+			blocks.push_back(_K);
+			goto _FLUSH;
+		}
+		
 		// L O C A L
 
 		if (key == "local") {

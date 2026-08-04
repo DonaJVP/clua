@@ -133,6 +133,8 @@ struct lua_Table {
 	uint64_t used_on_amap = 0;
 	uint64_t hmask = 0;
 	uint64_t kShape = 0;
+	uint64_t _BOOL_constTable = false;
+	uint64_t _padding;
 };
 
 // Values [Are all lua values]
@@ -429,6 +431,8 @@ enum _Lua_Lex_Keys {					// Lua Default	|	Addon				| Usable code for scripting |
 	// Special CLua keys, which they allow direct manipulation of CLua code generation
 	_L_FLAG_IGNORE_VARCHECK	=	80,
 	_L_FLAG_CONTINUE_FRAME2	=	81,
+	// Some preconfigured keys
+	_L_CONSTTABLE			=	82,
 };
 
 extern const std::string _LuaKeysString[85];
@@ -895,7 +899,7 @@ extern bool _0_0_0_CMPTIME_ASM_isScript;
 extern void *_0_0_0_CMPTIME_ASM_scriptMem;
 extern int32_t _0_0_0_CMPTIME_ASM_localStackFrameBytes;
 
-asmjit::x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, asmjit::x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD = false, bool noTag = false);
+asmjit::x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, asmjit::x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD = false, bool noTag = false, std::pair<uint32_t*, _Lua_Lex_Keys> middleCheck = {0, _L_NONE});
 asmjit::x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, asmjit::x86::Gp ret, lua_Scope *aSCP, bool pointer = false, bool preservRegister = false);
 asmjit::x86::Gp _ASM__keyInstRestoreVar(asmjit::x86::Gp toVar);
 void _F_ASM_MAKEFUNCTIONARGUMENTS(lua_Expression *Args, asmjit::x86::Assembler *a, lua_Scope *AS, bool give_stackptr, uint32_t stackptrsiz);
@@ -905,6 +909,9 @@ extern int32_t stackRegCounter; // Starts from -40.
 greg_t _CPP_getRegisterFromASM(asmjit::x86::Gp reg);
 void _ASM_DEBUGGER_STOP();
 void _lua_Table__initializeAssembler(asmjit::x86::Assembler *ptr);
+LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *scope = nullptr, bool _returnEmptyIfVariables = false);
+void _ASMH__rs_searchInTable(asmjit::x86::Gp tblPTR, std::pair<bool, std::pair<asmjit::x86::Gp, TString*>> key, asmjit::x86::Gp toGp, bool pointer = false);
+void _HELPER__runHooksFor(asmjit::x86::Gp rId, _R_CONTENTS id);
 inline void __ASM_callback_nothing_(asmjit::x86::Assembler *a, _REGISTER_ *reg) {}
 
 

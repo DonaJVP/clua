@@ -120,7 +120,7 @@ LuaLexFrame makeSingleExprB(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
             }
             case _L_F_ARGS_START: {
                 LuaLexFrame sfr = makeSingleExprP(keys, pos);
-                *pos = *pos + 1;
+                //*pos = *pos + 1;
                 contents.push_back(cache);
                 break;
             }
@@ -153,6 +153,9 @@ LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
             goto _END_;
         }
         switch (cache.key) {
+            case _L_ON_TO_GO_END: {
+                break;
+            }
             case _L_VARNAME: {
                 if (!_FIRSTADDR) {
                     local = cache.local;
@@ -167,8 +170,8 @@ LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
             case _L_ON_TO_GO: {
                 if (cache.ATTRIB) { // Non ".", but []
                     // Compile their contents & put to vector.
+                    *pos = *pos + 1;
                     data->push_back(makeSingleExprB(keys, pos));
-                    *pos = *pos + 1; // Pass from _L_ON_TO_GO_END to next key.
                 } else {
                     data->push_back(cache);
                 }
@@ -1344,13 +1347,15 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     uint16_t scopeAtFunc__ = UINT16_MAX;
     _Lua_Lex_Keys _latestKey = _L_NONE;
     std::string _s;
+    bool _DBG_skipFirst = true;
+    bool _DBG_skipSecond = true;
+    bool _DBG_skipThird = true;
     
     // Check _L_FLAG_CONTINUE_FRAME2 flag
     if (Keys->at(Keys->size()-1).key == _L_FLAG_CONTINUE_FRAME2) {
         _2_0001 = true;
         goto _frame2;
     }
-    
     
     while (true) {
         try {
@@ -1388,8 +1393,27 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                     _SDATA.multipleway = true;
                 }
                 NOW.push_back(_SDATA);
-                //pos++;
                 _0_local = false;
+                std::cout << "############# ARGS POSITION: " << pos << std::endl;
+                std::cout << "#######= -" << std::endl;
+                for (int aa = 0; aa < 16; aa++) {
+                    try {
+                        std::cout << "ARG KEYS: <" << aa << "> " << Keys->at(pos-aa).key << (Keys->at(pos-aa).key == _L_STRING ? "["+(std::string(Keys->at(pos-aa)._data.begin(), Keys->at(pos-aa)._data.end()))+"]" : "") << "+" << (Keys->at(pos-aa).key == _L_PATH ? "["+(Keys->at(pos-aa).addr->getHeaderVarString())+"]" : "") << " - " << pos-aa << std::endl;
+                    } catch (std::out_of_range &e) {
+                        
+                    }
+                }
+                std::cout << "#######= -" << std::endl;
+                std::cout << "#######= +" << std::endl;
+                for (int aa = 0; aa < 16; aa++) {
+                    try {
+                        std::cout << "ARG KEYS: <" << aa << "> " << Keys->at(pos+aa).key << (Keys->at(pos+aa).key == _L_STRING ? "["+(std::string(Keys->at(pos+aa)._data.begin(), Keys->at(pos+aa)._data.end()))+"]" : "") << "+" << (Keys->at(pos+aa).key == _L_VARNAME ? "["+(std::string(Keys->at(pos+aa)._data.begin(), Keys->at(pos+aa)._data.end()))+"]" : "") << " - " << pos+aa << std::endl;
+                    } catch (std::out_of_range &e) {
+                        
+                    }
+                }
+                std::cout << "#######= +" << std::endl;
+                std::cout << "############# ARGS POSITION: " << pos << std::endl;
                 break;
             }
             case _L_ON_TO_GO: {
@@ -1405,6 +1429,9 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                 break;
             }
             case _L_SEPARATOR: {
+                break;
+            }
+            case _L_F_ARGS_END: {
                 break;
             }
             default: {
@@ -1449,7 +1476,8 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                 break;
             }
             case _L_BlockEnd: {
-                scopes__--;
+                if (scopes__ != 0)
+                    scopes__--;
                 if (scopes__ == scopeAtFunc__) {
                     _2_FUNC = false;
                     toFocus->push_back(LuaLexFrame(_L_FLAG_CONTINUE_FRAME2));

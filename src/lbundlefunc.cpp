@@ -4121,16 +4121,16 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 // Only values with NIL flag or false flag will don't allow the execution of this.
                 LuaType _UNK = LuaUnknown;
                 //_F_ASM_MultiUse_EvalUntil(&cache.p.at(0), &a, ActualScope, _L_NONE, &_UNK, false, 0);
-                x86::Gp reg = CLUA_EvalExprNReturn(&cache.p.at(0), ActualScope, std::pair<bool, x86::Gp>(false, x86::noReg), false);
+                qlog0._log2("if() start\n");
+                qlog0._log2("if() start::data\n");
+                x86::Gp reg = CLUA_EvalExprNReturn(&cache.p.at(0), ActualScope, std::pair<bool, x86::Gp>(false, x86::noReg), false, true);
+                qlog0._log2("if() start::endData\n");
                 // Let's see...
                 // on rdi.
                 Label _STARTPOINT = a.new_label();
                 Label _ENDPOINT = a.new_label();
                 a.test(reg, reg);
                 a.jz(_ENDPOINT);
-                a.movabs(x86::r8, (uint64_t)0x7FF3000000000000ULL); // 0x7FF3000000000001ULL = LuaBoolean = false
-                a.cmp(reg, x86::r8);
-                a.je(_ENDPOINT);
                 a.bind(_STARTPOINT);
                 scopeBlocks.push_back(std::pair<Label, Label>(_STARTPOINT, _ENDPOINT)); // startpoint and endpoint
                 closures.push_back(_closure_helper{reg, 1, 0});
@@ -4140,6 +4140,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 _LK = cache.OPCODE;
                 // Update the variables cache
                 updateCacheRegisters(&a, ActualScope, symbols);
+                qlog0._log2("if() end\n");
                 break;
             }
             case l_b_o_c_FOR: {

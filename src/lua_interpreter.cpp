@@ -693,6 +693,7 @@ _EQ_TERM:
 			} else {
 				LuaLexFrame _K(_L_EQUALS);
 				blocks.push_back(_K);
+				_decl_decl = false;
 			}
 			goto _FLUSH;
 		} else if (_decl_decl) {

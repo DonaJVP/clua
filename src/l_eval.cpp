@@ -6,6 +6,7 @@
 #include <asmjit/x86.h>
 #include <asmjit/host.h>
 #include <stdexcept>
+#include <sys/ucontext.h>
 
 using namespace asmjit;
 
@@ -132,6 +133,12 @@ x86::Gp _CPP__getGeneralPurposeRegister(greg_t reg) {
         }
         case REG_RDI: {
             return x86::rdi;
+        }
+        case REG_RDX: {
+            return x86::rdx;
+        }
+        case REG_R10: {
+            return x86::r10;
         }
     }
 }
@@ -797,81 +804,141 @@ Values __ASM_F_STRINGMANIPULATOR_CONCAT2(TString *a, TString *b) {
 }
 
 
-x86::Gp _ASM__runOpCode(_Lua_Lex_Keys opcode, x86::Gp op0, x86::Gp op1, bool check0 = true) {
+x86::Gp _ASM__runOpCode(_Lua_Lex_Keys opcode, Reg op0r, Reg op1r, bool check0 = true) {
     int oQ = static_cast<int>(opcode);
-    
     // Math.
     if (oQ > 39 && oQ < 46) {
-        _ASM__GPR_Proc(op0, op1, opcode);
-        return op0;
+        if (op0r.is_vec128()) {
+            // Maybe vectors would work.
+            x86::Vec x0 = x86::Vec::make_v128(op0r.id());
+            x86::Vec x1 = x86::Vec::make_v128(op1r.id());
+            _ASM__vectorialProc(x0, x1, opcode);
+            return x86::noReg;
+        } else {
+            x86::Gp op0 = x86::Gp::make_r64(op0r.id());
+            x86::Gp op1 = x86::Gp::make_r64(op1r.id());
+            _ASM__GPR_Proc(op0, op1, opcode);
+        }
+        return x86::Gp::make_r64(op0r.id());
+    } else if (oQ == 15 || oQ == 21) {
+        x86::Gp op0 = x86::Gp::make_r64(op0r.id());
+        x86::Gp op1 = x86::Gp::make_r64(op1r.id());
+        switch (opcode) {
+            case _L_OR: {
+                //a->or_(op0, op0, op1); // Returns corrupted data when both has data.
+                abort();
+                Label _jmpIfZero = a->new_label();
+                a->test(op0, op0);
+                a->jz(_jmpIfZero);
+                a->mov(op0, op1);
+                a->bind(_jmpIfZero);
+                return op0;
+            }
+            case _L_NOT: {
+                /// !!! NOT USED!
+                return op0;
+            }
+            default: {}
+        }
     } else if (oQ > 28 && oQ < 34) { // STR/BOOL
-        
-    }
-    
-    switch (opcode) {
-        case _L_CONCAT: {
-            // Reset variables <As we go.>
-            if (lua_Registers.at(REG_RDI).cntId == _R_FUNC_ARGS) {
-                // Should save it?
-                lua_Registers.at(REG_RDI).stackPtrBase = -40+stackRegCounter;
-                stackRegCounter -= 8;
-                a->mov(x86::qword_ptr(x86::rbp, lua_Registers.at(REG_RDI).stackPtrBase), x86::rdi);
-                lua_Registers.at(REG_RDI).cntId = _R_TRASHDATA;
+        x86::Gp op0 = x86::Gp::make_r64(op0r.id());
+        x86::Gp op1 = x86::Gp::make_r64(op1r.id());
+        switch (opcode) {
+            // Boolean cases.
+            case _L_EQUALS: {
+                a->xor_(x86::rax, x86::rax);
+                a->cmp(op0, op1);
+                a->setz(x86::rax);
+                return x86::rax;
             }
-            if (lua_Registers.at(REG_RSI).cntId == _R_FUNC_ARGS) {
-                // Should save it?
-                lua_Registers.at(REG_RSI).stackPtrBase = -40+stackRegCounter;
-                stackRegCounter -= 8;
-                a->mov(x86::qword_ptr(x86::rbp, lua_Registers.at(REG_RSI).stackPtrBase), x86::rsi);
-                lua_Registers.at(REG_RSI).cntId = _R_TRASHDATA;
+            case _L_EQUALS_OR_MORE: {
+                a->xor_(x86::rax, x86::rax);
+                a->cmp(op0, op1);
+                a->setc(x86::rax);
+                return x86::rax;
             }
-            // Concat requires external calling..
-            qlog0._log2("start::concat()\n", 16);
-            Label noString;
-            Label end = a->new_label();
-            _ASM__movToReg(x86::r10, op1);
-            _ASM__movToReg(x86::r8, op0);
-            //a->ud2();
-            if (check0) {
-                noString = a->new_label();
-                a->mov(x86::r11, (uint64_t)0x000F000000000000ULL);
-                a->and_(x86::r11, x86::r8);
-                _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
-                a->mov(x86::r9, (uint64_t)L_ASM_Stri);
-                a->cmp(x86::r11, x86::r9);
-                a->jne(noString);
+            case _L_EQUALS_OR_MINUS: {
+                a->xor_(x86::rax, x86::rax);
+                _HELPER__runHooksFor(x86::rdx, _R_TRASHDATA);
+                a->xor_(x86::rdx, x86::rdx);
+                a->cmp(op0, op1);
+                a->setc(x86::rdx);
+                a->setz(x86::rax);
+                a->or_(x86::rax, x86::rdx);
+                return x86::rax;
             }
-            //a->ud2();
-            a->mov(x86::r11, (uint64_t)0x0000FFFFFFFFFFFFULL);
-            a->mov(x86::rdi, x86::r8);
-            a->mov(x86::rsi, x86::r10);
-            
-            qlog0._log2("\rrdi = Opcode0 ");
-            a->and_(x86::rdi, x86::r11);
-            qlog0._log2("\rrsi = Opcode1<Checked> ");
-            a->and_(x86::rsi, x86::r11);
-            qlog0._log2("\r__ASM_F_STRINGMANIPULATOR_CONCAT2(): ");
-            a->mov(x86::rax, (uint64_t)__ASM_F_STRINGMANIPULATOR_CONCAT2);
-            qlog0._log2("\r__ASM_F_STRINGMANIPULATOR_CONCAT2(): ");
-            a->call(x86::rax);
-            a->jmp(end);
-            if (check0)
-                a->bind(noString);
-            // Crash.
-            //a->ud2();
-            a->mov(x86::rax, 0);
-            a->bind(end);
-            
-            qlog0._log2("end::concat()\n", 14);
-            return x86::rax;
+            case _L_DOESNT_EQUALS: {
+                a->xor_(x86::rax, x86::rax);
+                a->cmp(op0, op1);
+                a->setz(x86::rax);
+                a->not_(x86::rax);
+                return x86::rax;
+            }
+            // String cases
+            case _L_CONCAT: {
+                // Reset variables <As we go.>
+                if (lua_Registers.at(REG_RDI).cntId == _R_FUNC_ARGS) {
+                    // Should save it?
+                    lua_Registers.at(REG_RDI).stackPtrBase = -40+stackRegCounter;
+                    stackRegCounter -= 8;
+                    a->mov(x86::qword_ptr(x86::rbp, lua_Registers.at(REG_RDI).stackPtrBase), x86::rdi);
+                    lua_Registers.at(REG_RDI).cntId = _R_TRASHDATA;
+                }
+                if (lua_Registers.at(REG_RSI).cntId == _R_FUNC_ARGS) {
+                    // Should save it?
+                    lua_Registers.at(REG_RSI).stackPtrBase = -40+stackRegCounter;
+                    stackRegCounter -= 8;
+                    a->mov(x86::qword_ptr(x86::rbp, lua_Registers.at(REG_RSI).stackPtrBase), x86::rsi);
+                    lua_Registers.at(REG_RSI).cntId = _R_TRASHDATA;
+                }
+                // Concat requires external calling..
+                qlog0._log2("start::concat()\n", 16);
+                Label noString;
+                Label end = a->new_label();
+                _ASM__movToReg(x86::r10, op1);
+                _ASM__movToReg(x86::r8, op0);
+                //a->ud2();
+                if (check0) {
+                    noString = a->new_label();
+                    a->mov(x86::r11, (uint64_t)0x000F000000000000ULL);
+                    a->and_(x86::r11, x86::r8);
+                    _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
+                    a->mov(x86::r9, (uint64_t)L_ASM_Stri);
+                    a->cmp(x86::r11, x86::r9);
+                    a->jne(noString);
+                }
+                //a->ud2();
+                a->mov(x86::r11, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                a->mov(x86::rdi, x86::r8);
+                a->mov(x86::rsi, x86::r10);
+                
+                qlog0._log2("\rrdi = Opcode0 ");
+                a->and_(x86::rdi, x86::r11);
+                qlog0._log2("\rrsi = Opcode1<Checked> ");
+                a->and_(x86::rsi, x86::r11);
+                qlog0._log2("\r__ASM_F_STRINGMANIPULATOR_CONCAT2(): ");
+                a->mov(x86::rax, (uint64_t)__ASM_F_STRINGMANIPULATOR_CONCAT2);
+                qlog0._log2("\r__ASM_F_STRINGMANIPULATOR_CONCAT2(): ");
+                a->call(x86::rax);
+                a->jmp(end);
+                if (check0)
+                    a->bind(noString);
+                // Crash.
+                //a->ud2();
+                a->mov(x86::rax, 0);
+                a->bind(end);
+                
+                qlog0._log2("end::concat()\n", 14);
+                return x86::rax;
+            }
+            default: {
+                m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Unknown resources.");
+                _ASM__insertNull(op0);
+                break;
+            }
         }
-        default: {
-            m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Unknown resources.");
-            _ASM__insertNull(op0);
-            break;
-        }
     }
-    return op0;
+    return x86::Gp::make_r64(op0r.id());
 }
 
 std::pair<bool, uint8_t> _CPP__emittedAnyOpcode(_Lua_Lex_Keys c) {
@@ -881,6 +948,9 @@ std::pair<bool, uint8_t> _CPP__emittedAnyOpcode(_Lua_Lex_Keys c) {
     }
     if (oQ > 28 && oQ < 34) {
         return {true, 2}; // String/Booleans operators.
+    }
+    if (oQ == 15 || oQ == 21) {
+        return {true, 3};
     }
     return {false, 0};
 }
@@ -1042,7 +1112,16 @@ std::pair<bool, uint8_t> _CPP__areThereOpInstruction(std::vector<LuaLexFrame> *l
     }
 }
 
-
+static bool _savedRET_0 = false;
+void _SaveRDX__000(x86::Assembler *b, _REGISTER_ *reg) {
+    a->mov(x86::qword_ptr(x86::rbp, -64), x86::rdx);
+}
+void _SaveRET__000(x86::Assembler *b, _REGISTER_ *reg) {
+    if (reg->cntId != _R_CLUATYPE_TAGGED)
+        return;
+    a->mov(x86::qword_ptr(x86::rbp, -72), _CPP__getGeneralPurposeRegister(reg->rID));
+    _savedRET_0 = true;
+}
 
 x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD, bool noTag, std::pair<uint32_t*, _Lua_Lex_Keys> middleCheck) {
     LuaLexFrame *pointer = nullptr;
@@ -1051,14 +1130,21 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
         _usePointer = true;
     _Lua_Lex_Keys stopAt = middleCheck.second;
     uint32_t pos = _usePointer ? *middleCheck.first : 0;
-    x86::Gp ret = saveSpecificallyTo.first ? saveSpecificallyTo.second : x86::rax;
+    x86::Gp ret = saveSpecificallyTo.first ? saveSpecificallyTo.second : x86::rsi;
+    _HELPER__runHooksFor(ret, _R_TRASHDATA);
     bool _setReg = false;
     x86::Gp q0 = x86::noReg;
     _Lua_Lex_Keys _OPMODE = _L_NONE;
+    
+    // Debug
+    std::cout << "DebuggingStraightExpr: " << k->size() << std::endl;
+    for (LuaLexFrame &i: *k) {
+        std::cout << std::dec << "$[" << i.key << "] ";
+    }
+    std::cout << std::endl;
     bool _notOpCode = false;
     bool _emitted_xmmOCX = false;
     uint8_t tEmittedCode = 0;
-    m_LuaErrorHandler->reportWarning(_lua_es_Illegal, 0, (noTag ? "noTag" : "Tagged"));
     bool _presearched_query = false;
     bool _use_ret_reg = false;
     bool _quotient_r = false;
@@ -1096,7 +1182,25 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
             _presearched_query = false;
             continue;
         }
+        if (pos != 0) {
+            lua_Registers.at(_CPP_getRegisterFromASM(ret)).cntId = _R_CLUATYPE_TAGGED; // Value is an value.
+            lua_Registers.at(_CPP_getRegisterFromASM(ret)).onModified = _SaveRET__000;
+        }
         switch (pointer->key) {
+            // Expression case.
+            case _L_EXPRESSION: {
+                _HELPER__runHooksFor(ret, _R_TRASHDATA); // Save pointer.
+                x86::Gp res = CLUA_EvalExprNReturn(&pointer->EXPR.at(0), scope, std::pair<bool, x86::Gp>(false,x86::noReg), getPointerInsteadofRawD, noTag);
+                _ASM__movToReg(x86::r10, res);
+                if (lua_Registers.at(_CPP_getRegisterFromASM(ret)).cntId != _R_CLUATYPE_TAGGED) // Restore last saved key.
+                    a->mov(ret, x86::qword_ptr(x86::rbp, -72));
+                if (_OPMODE != _L_NONE) {
+                    x86::Gp _ret =  _ASM__runOpCode(_OPMODE, ret, x86::r10, true);
+                    _ASM__movToReg(ret, _ret);
+                    _OPMODE = _L_NONE;
+                }
+                break;
+            }
             case _L_NIL: {
                 
                 break;
@@ -1262,6 +1366,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                 if (pos != 0)
                     queue.push_back(_Warning{ret.id(),128,0,0});
                 x86::Gp path = _ASM__getPathToSelGp(pointer->addr->getData(), toUse, scope, getPointerInsteadofRawD, true);
+                _HELPER__runHooksFor(ret, _R_CLUATYPE_TAGGED);
                 bool _MVKR = true;
                 // Use deque if some registers have been modified.
                 if (queue.size() > 0 && queue.back().m4 == 1) { // Main register modified.
@@ -1274,7 +1379,6 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                 lType0 = pointer->LuaTYPE;
                 _presearched_query = true;
                 //qlog0._log2("[[[GOOT VARIABLE]]]\n");
-                std::cout << "UpdatedSeekedType: " << std::to_string(pointer->LuaTYPE) << "; Var=" <<pointer->addr->getHeaderVarString()<< std::endl;
                 if (pointer->LuaTYPE == 9) {
                     qlog0._log2("pointer->LuaTYPE == LuaNumber [Arithmetic OPMODE]\n");
                     if (_OPMODE == _L_NONE) {
@@ -1447,6 +1551,53 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                 break;
             }
             
+            case _L_TRUE: {
+                if (lua_Registers.at(_CPP_getRegisterFromASM(ret)).cntId == _R_CLUATYPE_TAGGED) {
+                    if (ret == x86::rdx) {
+                        // Maybe put a save function.
+                        lua_Registers.at(_CPP_getRegisterFromASM(ret)).onModified = reinterpret_cast<_regCallback>(_SaveRDX__000);
+                    }
+                    // Theres a existent value.
+                    if (_OPMODE) {
+                        if (tEmittedCode == 2) {
+                            a->mov(x86::r10, 0x7FF3000000000001ULL);
+                            x86::Gp r_ = _ASM__runOpCode(_OPMODE, ret, x86::r10, false);
+                            _ASM__movToReg(ret, r_);
+                        } else {
+                            m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, ("Invalid operator: ")+(std::to_string(_OPMODE)));
+                            m_LuaErrorHandler->setFatal(true);
+                        }
+                    }
+                } else {
+                    a->movabs(ret, 0x7FF3000000000001ULL);
+                    _HELPER__runHooksFor(ret, _R_CLUATYPE_TAGGED);
+                }
+                break;
+            }
+            case _L_FALSE: {
+                if (lua_Registers.at(_CPP_getRegisterFromASM(ret)).cntId == _R_CLUATYPE_TAGGED) {
+                    if (ret == x86::rdx) {
+                        // Maybe put a save function.
+                        lua_Registers.at(_CPP_getRegisterFromASM(ret)).onModified = _SaveRDX__000;
+                    }
+                    // Theres a existent value.
+                    if (_OPMODE) {
+                        if (tEmittedCode == 2) {
+                            a->mov(x86::r10, 0x0000000000000000ULL); // False shouldn't carry any next value.
+                            x86::Gp r_ = _ASM__runOpCode(_OPMODE, ret, x86::r10, false);
+                            _ASM__movToReg(ret, r_);
+                        } else {
+                            m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, ("Invalid operator: ")+(std::to_string(_OPMODE)));
+                            m_LuaErrorHandler->setFatal(true);
+                        }
+                    }
+                } else {
+                    a->movabs(ret, 0x0000000000000000ULL);
+                    _HELPER__runHooksFor(ret, _R_CLUATYPE_TAGGED);
+                }
+                break;
+            }
+            
             // NUMBERS.
             
             case _L_NUMBER: {
@@ -1486,7 +1637,11 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                         a->movd(x86::xmm1, x86::r9);
                         // Dont care if it are Vectorial registers... Just data.
                         // Proc those. [Class0 = Vectorial Proc]
-                        _ASM__vectorialProc(x86::xmm0, x86::xmm1, _OPMODE);
+                        x86::Gp res = _ASM__runOpCode(_OPMODE, x86::xmm0, x86::xmm1);
+                        if (res == x86::rax) { // It was some of the comparisons around there..
+                            _ASM__movToReg(ret, res);
+                            break;
+                        }
                         a->movd(ret, x86::xmm0);
                         break;
                     }
@@ -1496,12 +1651,21 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                                 a->cvtsi2sd(x86::xmm0, q0);
                                 a->movabs(x86::r9, (uint64_t)std::stod(std::string(pointer->_data.begin(), pointer->_data.end())));
                                 a->movd(x86::xmm1, x86::r9);
-                                _ASM__vectorialProc(x86::xmm0, x86::xmm1, _OPMODE);
+                                x86::Gp reg = _ASM__runOpCode(_OPMODE, x86::xmm0, x86::xmm1);
+                                if (reg == x86::rax) {
+                                    _ASM__movToReg(ret, reg);
+                                    q0 = x86::noReg;
+                                    break;
+                                }
                                 a->movd(q0, x86::xmm0);
                                 //q0 = x86::noReg;
                             } else { // Direct
                                 a->mov(x86::r9, std::stoi(std::string(pointer->_data.begin(), pointer->_data.end())));
-                                _ASM__GPR_Proc(_ASM__keyInstRestoreVar(q0), x86::r9, _OPMODE);
+                                x86::Gp reg = _ASM__runOpCode(_OPMODE, _ASM__keyInstRestoreVar(q0), x86::r9);
+                                if (reg == x86::rax) {
+                                    _ASM__movToReg(ret, reg);
+                                    break;
+                                }
                                 //a->movd(ret, x86::xmm0);
                             }
                         } else if (lType0 == 9) { // Number
@@ -1509,13 +1673,23 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                                 a->movabs(x86::r9, (uint64_t)std::stod(std::string(pointer->_data.begin(), pointer->_data.end())));
                                 a->movd(x86::xmm1, x86::r9);
                                 a->movd(x86::xmm0, q0);
-                                _ASM__vectorialProc(x86::xmm0, x86::xmm1, _OPMODE);
+                                x86::Gp reg = _ASM__runOpCode(_OPMODE, x86::xmm0, x86::xmm1);
+                                if (reg == x86::rax) {
+                                    _ASM__movToReg(ret, reg);
+                                    q0 = x86::noReg;
+                                    break;
+                                }
                                 a->movd(q0, x86::xmm0);
                             } else { // Transform current to xmm & move.
                                 a->movabs(x86::r9, (uint64_t)std::stod(std::string(pointer->_data.begin(), pointer->_data.end())));
                                 a->movd(x86::xmm1, x86::r9);
                                 a->movd(x86::xmm0, q0);
-                                _ASM__vectorialProc(x86::xmm0, x86::xmm1, _OPMODE);
+                                x86::Gp reg = _ASM__runOpCode(_OPMODE, x86::xmm0, x86::xmm1);
+                                if (reg == x86::rax) {
+                                    _ASM__movToReg(ret, reg);
+                                    q0 = x86::noReg;
+                                    break;
+                                }
                                 a->movd(q0, x86::xmm0);
                             }
                         }
@@ -1528,21 +1702,28 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                         a->mov(x86::r9, std::stod(std::string(pointer->_data.begin(), pointer->_data.end())));
                         a->movd(x86::xmm1, x86::r9);
                         // [Class0 = Vectorial Proc]
-                        _ASM__vectorialProc(x86::xmm0, x86::xmm1, _OPMODE);
+                        _ASM__runOpCode(_OPMODE, x86::xmm0, x86::xmm1);
                         a->movd(ret, x86::xmm0);
                     } else {
                         // [Class1 = GPR Proc]
                         a->mov(x86::r10, (uint64_t)std::stoi(std::string(pointer->_data.begin(), pointer->_data.end())));
                         _ASM__movToReg(ret, _ASM__keyInstRestoreVar(ret));
-                        //a->mov(x86::r8, (uint64_t)0x0000FFFFFFFFFFFFULL);
-                        //a->and_(ret, x86::r8);
-                        _ASM__GPR_Proc(ret, x86::r10, _OPMODE);
+                        if (lua_Registers.at(_CPP_getRegisterFromASM(ret)).cntId == _R_CLUATYPE_TAGGED) {
+                            a->mov(x86::r8, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                            a->and_(ret, x86::r8);
+                        }
+                        x86::Gp reg = _ASM__runOpCode(_OPMODE, ret, x86::r10);
                         if (!noTag) {
                             if (!_CPP__areThereOpInstruction(k, pos+1).first) {
                                 // Push some classic LUA
                                 a->mov(x86::r9, (uint64_t)0x7FF8000000000000ULL);
-                                a->or_(ret, x86::r9);
+                                a->or_(reg, x86::r9);
+                                _ASM__movToReg(ret, reg);
+                            } else {
+                                _HELPER__runHooksFor(ret, _R_CLUATYPE_UNTAGGED);
                             }
+                        } else {
+                            _ASM__movToReg(ret, reg);
                         }
                     }
                 }

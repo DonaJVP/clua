@@ -1,6 +1,7 @@
 #include "lua.hpp"
 #include <cstdint>
 #include <set>
+#include <vector>
 #include <deque>
 #include <string>
 #include <stdexcept>
@@ -44,6 +45,19 @@ static void _H_EVAL_HOTTESTVARIABLESNPTHVAR(lua_Scope *state) {
 static lua_Scope *_H_ADD_TO_HOTTESTVARIABLESNPROC(lua_Scope *state, const std::string vname, lua_Scope *rSTATE = nullptr) {
     if (state->HottestVariables.find(vname) != state->HottestVariables.end()) {
         state->HottestVariables.at(vname) = state->HottestVariables.at(vname)+1;
+        // Add to the next rSTATE if available as our +1 scope.
+        for (lua_Scope *scope: state->lSCOPE) {
+            if (scope == rSTATE) { // Compare pointers
+                if (rSTATE->HottestVariables.find(vname) != rSTATE->HottestVariables.end()) {
+                    uint32_t uses = state->HottestVariables.at(vname);
+                    rSTATE->HottestVariables.insert(std::pair<std::string, uint32_t>(vname,uses));
+                } else {
+                    // Exists. 
+                    rSTATE->HottestVariables.at(vname) = rSTATE->HottestVariables.at(vname)+1;
+                }
+                break;
+            }
+        }
     } else {
         // Search if they are on the parent scope.
         if (state->rSCOPE != nullptr) 

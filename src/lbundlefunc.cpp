@@ -687,6 +687,7 @@ x86::Gp _HELPER_PARSEREGISTER_FROMOFFSET(uint32_t crt) {
         case 3:
             return x86::rcx;
     }
+    return x86::noReg;
 }
 
 // Translates from LuaLexFrame keys to compatible scope mode. Which can be used for optimizations and for making ASM code easier.
@@ -3754,9 +3755,12 @@ static void dumpinf(std::vector<lua_biOpCode> *c) {
  */
 
 struct _closure_helper {
-    x86::Gp _uReg;
+    x86::Gp _uReg = x86::noReg;
+    x86::Gp _toCmp = x86::noReg;
+    x86::Gp _stepReg = x86::noReg;
     uint8_t closureType = 0;
-    int64_t _FOR_goal = 0;
+    int64_t toCmp_ = 0;
+    int64_t step_ = 0;
     TString *_vName;
 };
 
@@ -4063,7 +4067,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 a.jz(_ENDPOINT);
                 a.bind(_STARTPOINT);
                 scopeBlocks.push_back(std::pair<Label, Label>(_STARTPOINT, _ENDPOINT)); // startpoint and endpoint
-                closures.push_back(_closure_helper{reg, 1, 0});
+                closures.push_back(_closure_helper{reg, x86::noReg, x86::noReg, 1, 0, 0, nullptr});
                 IF_statements++;
                 // Scope start, has variables in it
                 ActualScope = cache.SCOPE;
@@ -4099,54 +4103,160 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         // First, search it.
                         std::pair<x86::Gp, x86::Gp> register_1 = _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(varname, ActualScope, &a, true, false);
                         qlog0._log2("\033[31m");
-                        x86::Gp register_ = register_1.first;
+                        x86::Gp register_ = register_1.first; // Count ptr
+                        x86::Gp startPointReg = x86::noReg; // Number which we need to reach.
+                        x86::Gp toCmpReg = x86::noReg; // Reached point ptr
+                        x86::Gp stepReg = x86::noReg; // How many steps should take every iteration.
                         // Extract values from the expression.
-                        std::vector<int64_t> nms;
-                        for (std::vector<LuaLexFrame> &a: cache.p) {
-                            for (LuaLexFrame &b: a) {
+                        int64_t _hyperValue__startpoint = 0;
+                        int64_t _hyperValue__comparepoint = 0;
+                        int64_t _hyperValue__stepPoint = 0;
+                        bool _fI = false;
+                        for (std::vector<LuaLexFrame> &q: cache.p) {
+                            for (LuaLexFrame &b: q) {
+                                if (b.key == _L_PATH) {
+                                    // Skip the first iteration, as is.. This is the first variable to iterate, likely: <i> = 1, 2
+                                    if (!_fI) {
+                                        _fI = !_fI;
+                                        continue;
+                                    }
+                                }
+                                    
                                 if (b.key == _L_NUMBER) {
-                                    nms.push_back(std::stoll(std::string(b._data.begin(), b._data.end())));
+                                    //nms.push_back();
+                                    int64_t value = std::stoll(std::string(b._data.begin(), b._data.end()));
+                                    if (startPointReg == x86::noReg) {
+                                        startPointReg = x86::rdi;
+                                        _hyperValue__startpoint = value;
+                                    } else if (toCmpReg == x86::noReg){
+                                        toCmpReg = x86::rdi;
+                                        _hyperValue__comparepoint = value;
+                                    } else if (stepReg == x86::noReg) {
+                                        stepReg = x86::rdi;
+                                        _hyperValue__stepPoint = value;
+                                    }
+                                } else {
+                                    if (b.key == _L_EXPRESSION) {
+                                        // SHOOOSH.
+                                        uint64_t *toSave = nullptr;
+                                        // Compare.
+                                        x86::Gp reg = CLUA_EvalExprNReturn(&cache.p.at(0), ActualScope, std::pair<bool, x86::Gp>(true, x86::rax), false, true); // rax will be ignored if using a high speed local var
+                                        if (reg.id() > 11) { // High registers
+                                            if (startPointReg == x86::noReg) {
+                                                startPointReg = reg;
+                                            } else if (toCmpReg == x86::noReg)
+                                                toCmpReg = reg;
+                                            else { // Set
+                                                if (stepReg == x86::noReg) {
+                                                    stepReg = reg;
+                                                } else {
+                                                    m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("More than expected -> 'for' keyword"));
+                                                    m_LuaErrorHandler->setFatal(true);
+                                                    return nullptr;
+                                                }
+                                            }
+                                        } else {
+                                            toSave = new uint64_t(0);
+                                            a.movabs(x86::r8, (uint64_t)toSave);
+                                            a.mov(x86::qword_ptr(x86::r8), reg);
+                                            //memcpy(&_h)
+                                            if (startPointReg == x86::noReg) {
+                                                toCmpReg = x86::rax;
+                                                memcpy(&_hyperValue__startpoint, &(toSave), 8); // Fast at first glance
+                                            } else if (toCmpReg == x86::noReg) {
+                                                toCmpReg = x86::rax;
+                                                memcpy(&_hyperValue__comparepoint, &(toSave), 8); // Slow
+                                            } else if (stepReg == x86::noReg) {
+                                                stepReg = x86::rax;
+                                                memcpy(&_hyperValue__stepPoint, &(toSave), 8); // Slow
+                                            } else {
+                                                m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("More than expected -> 'for' keyword"));
+                                                m_LuaErrorHandler->setFatal(true);
+                                                return nullptr;
+                                            }
+                                        }
+                                    } else {
+                                        if (b.key == _L_PATH) {
+                                            //std::pair<x86::Gp, x86::Gp> regs = _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(varname, ActualScope, &a, true, false);
+                                            // Maybe it is not the correct time to guess where it is, but their root.
+                                            lua_localSymbol var = acquireVariableFromExtensions(b.addr->getHeaderVarString(), ActualScope);
+                                            x86::Gp reg0;
+                                            if (var.cacheReg > 0) {
+                                                reg0 = id_to_reg(var.cacheReg-1);
+                                                //std::cout << std::to_string(var.cacheReg) << "; " << b.addr->getHeaderVarString() << std::endl;
+                                            } else {
+                                                reg0 = x86::rax; // A way to assimilate.
+                                            }
+                                            // if (reg0.id() > 11) {
+                                                if (startPointReg == x86::noReg)
+                                                    startPointReg = reg0;
+                                                else if (toCmpReg == x86::noReg)
+                                                    toCmpReg = reg0;
+                                                else if (stepReg == x86::noReg)
+                                                    stepReg = reg0;
+                                                else {
+                                                    m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("More than expected -> 'for' keyword"));
+                                                    m_LuaErrorHandler->setFatal(true);
+                                                    return nullptr;
+                                                }
+                                            // }
+                                        }
+                                    }
                                 }
                             }
                         }
-                        if (nms.size() < 4) {
-                            // It is illegal to had less than 3 numbers for each iteration.
-                            // Order: 0, 10, 1 = Start at 0 and each iteration must sum 1 until we reach 10
-                            for (uint8_t i = 0; i < 3; i++) {
-                                try {
-                                    (void*)nms.at(i);
-                                } catch (std::out_of_range &e) {
-                                    // Doesnt exist.
-                                    nms.push_back(1);
-                                }
-                            }
-                        }
-                        //std::reverse(nms.begin(), nms.end());
-                        uint8_t pos = 1;
-                        for (int64_t &V: nms) {
-                            std::cout << std::to_string(pos) << ": "<< std::hex << V << std::endl;
-                            pos++;
-                        }
-                        
                         //counters.push_back(std::pair<std::vector<int64_t>, x86::Gp>(nms, register_));
                         // Transform nms.at(2) to be a compatible value.
-                        int64_t aZ = nms.at(1);
-                        uint64_t num2 = 0x0000000000000000ULL;
-                        num2 += (uint64_t)aZ;
-                        nms.at(1) = num2;
-                        closures.push_back(_closure_helper{register_, 2, nms.at(1), varname});
-                        // Reset that number to a clear Values
-                        uint64_t num = 0x0000000000000000ULL;
-                        num += (uint64_t)nms.at(0);
-                        if (register_ != x86::rdi) { // If not rdi then is a memory-like register [r12 to r15]
-                            a.mov(register_, num);
-                            if (register_.id() > 11) {
+                        closures.push_back(_closure_helper{register_, toCmpReg, stepReg, 2, _hyperValue__comparepoint, _hyperValue__stepPoint, varname});
+                        if (register_ != x86::rdi) { // If not rdi then it is a high speed variable
+                            if (_hyperValue__startpoint != 0 && startPointReg == x86::rdi) {
+                                a.mov(register_, (uint64_t)_hyperValue__startpoint & 0x0000FFFFFFFFFFFFULL);
+                            } else {
+                                if (startPointReg != x86::noReg) {
+                                    if (startPointReg != x86::rdi) {
+                                        if (startPointReg.id() > 11) {
+                                            a.mov(x86::r11, 0x0000FFFFFFFFFFFFULL);
+                                            a.and_(startPointReg, x86::r11);
+                                        } else {
+                                            // Stored in memory.
+                                            a.mov(x86::rdi, static_cast<uint64_t>(_hyperValue__startpoint));
+                                            a.mov(startPointReg, x86::qword_ptr(x86::rdi));
+                                        }
+                                        a.mov(register_, startPointReg);
+                                    } else {
+                                        a.mov(register_, (uint64_t)_hyperValue__startpoint);
+                                    }
+                                } else {
+                                    m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("Required special keyword"));
+                                    m_LuaErrorHandler->setFatal(true);
+                                    return nullptr;
+                                }
                                 uint8_t idx = rIdTo_symbol(register_.id());
                                 symbols->at(idx)->type = LuaInteger;
-                            }
+                            }  
                         } else {
-                            a.mov(x86::rdx, num);
-                            a.mov(x86::qword_ptr(x86::rdi), x86::rdx);
+                            if (startPointReg != x86::noReg) {
+                                if (startPointReg != x86::rdi) {
+                                    if (startPointReg.id() > 11) {
+                                        a.mov(x86::r11, 0x0000FFFFFFFFFFFFULL);
+                                        a.and_(startPointReg, x86::r11);
+                                    } else {
+                                        // Stored in memory.
+                                        a.mov(x86::rdi, static_cast<uint64_t>(_hyperValue__startpoint));
+                                        a.mov(startPointReg, x86::qword_ptr(x86::rdi));
+                                    }
+                                    a.mov(x86::rdx, startPointReg);
+                                    a.mov(x86::qword_ptr(x86::rdi), x86::rdx);
+                                } else if (startPointReg == x86::rdi) {
+                                    a.mov(x86::rdx, (uint64_t)_hyperValue__startpoint);
+                                    a.mov(x86::qword_ptr(x86::rdi), x86::rdx);
+                                }
+                            } else {
+                                m_LuaErrorHandler->reportError(_lua_es_InvalidUsage, 0, std::string("Required special keyword"));
+                                m_LuaErrorHandler->setFatal(true);
+                                return nullptr;
+                            }
+                            
                         }
                         // Ez way to get numbers.
                         // Create labels.
@@ -4183,24 +4293,66 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 if (closures.back().closureType == 2) {
                     for_cnt_--;
                     qlog0._log2("end::For__<ReachedPoint>\n");
-                    int64_t goal_ = closures.back()._FOR_goal;
+                    int64_t goal_ = closures.back().toCmp_;
                     // Counter is at some state..
                     // Uhm, let's check registers.
                     x86::Gp _uReg = closures.back()._uReg;
-                    a.movabs(x86::r8, (uint64_t)goal_);
-                    if (_uReg != x86::rdi) {
+                    if (_uReg != x86::noReg) {
                         // We can do direct arithmetic.
-                        a.cmp(_uReg, x86::r8);
+                        x86::Gp gpToUse = x86::r8;
+                        if (closures.back()._toCmp == x86::rax) { // Pointer
+                            a.mov(x86::r8, static_cast<uint64_t>(closures.back().toCmp_));
+                            a.mov(x86::r8, x86::qword_ptr(x86::r8));
+                        } else if (closures.back()._toCmp == x86::rdi) {
+                            a.mov(x86::r8, (uint64_t)goal_);
+                        } else if (closures.back()._toCmp.id() > 11) {
+                            //a.mov(x86::r8, closures.back()._toCmp);
+                            gpToUse = closures.back()._toCmp;
+                        }
+                        a.cmp(_uReg, gpToUse);
                         a.jae(scopeBlocks.back().second);
-                        a.inc(_uReg);
+                        if (closures.back()._stepReg == x86::rax) { // Pointer
+                            a.mov(x86::r8, static_cast<uint64_t>(closures.back().step_));
+                            a.mov(x86::r8, x86::qword_ptr(x86::r8));
+                            a.add(_uReg, x86::r8);
+                        } else if (closures.back()._stepReg == x86::rdi) {
+                            a.mov(x86::r8, (uint64_t)closures.back().step_);
+                            a.add(_uReg, x86::r8);
+                        } else if (closures.back()._stepReg.id() > 11 && closures.back()._stepReg != x86::noReg) {
+                            a.add(_uReg, closures.back()._stepReg);
+                        } else {
+                            a.inc(_uReg);
+                        }
                         a.jmp(scopeBlocks.back().first);
                     } else {
                         std::pair<x86::Gp, x86::Gp> register_ = _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(closures.back()._vName, ActualScope, &a, false, false, true);
                         if (register_.first != x86::rdi) {
                             // We can do direct arithmetic.
-                            a.cmp(register_.first, x86::r8);
+                            x86::Gp gpToUse = x86::r8;
+                            if (closures.back()._toCmp == x86::rax) { // Pointer
+                                a.mov(x86::r8, static_cast<uint64_t>(closures.back().toCmp_));
+                                a.mov(x86::r8, x86::qword_ptr(x86::r8));
+                            } else if (closures.back()._toCmp == x86::rdi) {
+                                a.mov(x86::r8, (uint64_t)goal_);
+                            } else if (closures.back()._toCmp.id() > 11) {
+                                //a.mov(x86::r8, closures.back()._toCmp);
+                                gpToUse = closures.back()._toCmp;
+                            }
+                            a.cmp(x86::qword_ptr(register_.first), gpToUse);
                             a.jae(scopeBlocks.back().second);
-                            a.inc(register_.first);
+                            if (closures.back()._stepReg == x86::rax) { // Pointer
+                                a.mov(x86::r8, static_cast<uint64_t>(closures.back().step_));
+                                a.mov(x86::r8, x86::qword_ptr(x86::r8));
+                                a.add(x86::qword_ptr(register_.first), x86::r8);
+                            } else if (closures.back()._stepReg == x86::rdi) {
+                                a.mov(x86::r8, (uint64_t)closures.back().step_);
+                                a.add(x86::qword_ptr(register_.first), x86::r8);
+                            } else if (closures.back()._stepReg.id() > 11 && closures.back()._stepReg != x86::noReg) {
+                                a.add(x86::qword_ptr(register_.first), closures.back()._stepReg);
+                            } else {
+                                a.inc(x86::qword_ptr(register_.first));
+                            }
+                            //a.inc(x86::qword_ptr(register_.first));
                             a.jmp(scopeBlocks.back().first);
                         } else {
                             // We can do direct arithmetic.

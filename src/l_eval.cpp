@@ -143,13 +143,8 @@ x86::Gp _CPP__getGeneralPurposeRegister(greg_t reg) {
     }
 }
 
-void _ASM__crash(uint8_t errCode) {
-    switch (errCode) {
-        case notFunction: {
-            m_LuaErrorHandler->reportError(_lua_es_NonFunction, 0, "During execution: Not a function.");
-            return;
-        }
-    }
+void _ASM__crash(lua_ErrSignals errCode) {
+    m_LuaErrorHandler->reportError(errCode, 0, "During execution: Not a function.");
 }
 
 void _ASM_DEBUGGER_STOP() {
@@ -803,20 +798,84 @@ Values __ASM_F_STRINGMANIPULATOR_CONCAT2(TString *a, TString *b) {
     return lua_makeVar(OBJ, LuaString); //More portable usage.
 }
 
+x86::Gp _ASM__runOpCode__checkArithmeticRegister__tInteger(x86::Gp reg) {
+    Label _B_isInteger = a->new_label();
+    Label _B_crashZone = a->new_label();
+    _ASM__cmpVarType(reg, LuaInteger);
+    a->je(_B_isInteger);
+    _ASM__cmpVarType(reg, LuaNumber);
+    a->jne(_B_crashZone);
+    a->movd(x86::xmm0, reg);
+    a->cvttsd2si(reg, x86::xmm0);
+    a->jmp(_B_isInteger);
+    a->bind(_B_crashZone);
+    a->mov(x86::rdi, _lua_es_InvalidType);
+    a->call((uint64_t)_ASM__crash);
+    a->bind(_B_isInteger);
+}
 
-x86::Gp _ASM__runOpCode(_Lua_Lex_Keys opcode, Reg op0r, Reg op1r, bool check0 = true) {
+x86::Gp _ASM__runOpCode(_Lua_Lex_Keys opcode, Reg op0r, Reg op1r, bool check0 = true, bool check1 = true) {
     int oQ = static_cast<int>(opcode);
     // Math.
     if (oQ > 39 && oQ < 46) {
-        if (op0r.is_vec128()) {
+        if (op0r.is_vec128() || op1r.is_vec128()) {
             // Maybe vectors would work.
-            x86::Vec x0 = x86::Vec::make_v128(op0r.id());
-            x86::Vec x1 = x86::Vec::make_v128(op1r.id());
+            x86::Vec x0;
+            x86::Vec x1;
+            if (op0r.is_gp64()) {
+                // Transform.
+                x0 = x86::xmm0;
+                x86::Gp op0 = x86::Gp::make_r64(op0r.id());
+                if (check1) {
+                    Label _isNumber = a->new_label();
+                    Label _iCrash = a->new_label();
+                    _ASM__cmpVarType(op0, LuaNumber);
+                    a->je(_isNumber);
+                    // If not, transform it.
+                    _ASM__cmpVarType(op0, LuaInteger);
+                    a->jne(_iCrash);
+                    _ASM__movToReg(x86::r10, op0);
+                    a->mov(x86::r11, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                    a->and_(x86::r10, x86::r11);
+                    a->cvtsi2sd(x0, x86::r10);
+                    a->jmp(_isNumber);
+                    a->bind(_iCrash);
+                    a->mov(x86::rdi, _lua_es_InvalidType);
+                    a->call((uint64_t)_ASM__crash);
+                    a->bind(_isNumber);
+                }
+            }
+            if (op1r.is_gp64()) {
+                x1 = x86::xmm1;
+                x86::Gp op1 = x86::Gp::make_r64(op1r.id());
+                if (check1) {
+                    Label _isNumber = a->new_label();
+                    Label _iCrash = a->new_label();
+                    _ASM__cmpVarType(op1, LuaNumber);
+                    a->je(_isNumber);
+                    // If not, transform it.
+                    _ASM__cmpVarType(op1, LuaInteger);
+                    a->jne(_iCrash);
+                    _ASM__movToReg(x86::r10, op1);
+                    a->mov(x86::r11, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                    a->and_(x86::r10, x86::r11);
+                    a->cvtsi2sd(x1, x86::r10);
+                    a->jmp(_isNumber);
+                    a->bind(_iCrash);
+                    a->mov(x86::rdi, _lua_es_InvalidType);
+                    a->call((uint64_t)_ASM__crash);
+                    a->bind(_isNumber);
+                }
+            }
+            //x86::Vec x0 = x86::Vec::make_v128(op0r.id());
+            //x86::Vec x1 = x86::Vec::make_v128(op1r.id());
             _ASM__vectorialProc(x0, x1, opcode);
             return x86::noReg;
         } else {
             x86::Gp op0 = x86::Gp::make_r64(op0r.id());
             x86::Gp op1 = x86::Gp::make_r64(op1r.id());
+            _ASM__runOpCode__checkArithmeticRegister__tInteger(op0);
+            _ASM__runOpCode__checkArithmeticRegister__tInteger(op1);
             _ASM__GPR_Proc(op0, op1, opcode);
         }
         return x86::Gp::make_r64(op0r.id());
@@ -826,7 +885,6 @@ x86::Gp _ASM__runOpCode(_Lua_Lex_Keys opcode, Reg op0r, Reg op1r, bool check0 = 
         switch (opcode) {
             case _L_OR: {
                 //a->or_(op0, op0, op1); // Returns corrupted data when both has data.
-                abort();
                 Label _jmpIfZero = a->new_label();
                 a->test(op0, op0);
                 a->jz(_jmpIfZero);
@@ -1398,15 +1456,21 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                                 _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
                                 a->movd(x86::xmm0, x86::r9);
                             }
+                            _emitted_xmmOCX = false;
                         } else {
                             // Move that number to our registers.
                             a->movd(x86::xmm0, _ASM__keyInstRestoreVar(ret));
                         }
-                        _ASM__vectorialProc(x86::xmm0, x86::xmm1, _OPMODE);
+                        x86::Gp res = _ASM__runOpCode(_OPMODE, x86::xmm0, x86::xmm1);
+                        if (res == x86::rax) {
+                            _ASM__movToReg(ret, res);
+                            goto _finishLane_eXMM9;
+                        }
                         if (_CPP__areThereOpInstruction(k, pos+1).first) {
                             a->movd(ret, x86::xmm0);
                         }
                     }
+                    _finishLane_eXMM9:
                     if (_notOpCode) {
                         a->not_(ret);
                     }
@@ -1427,13 +1491,19 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                         if (_emitted_xmmOCX) {
                             // Transform to double in xmm1
                             a->cvtsi2sd(x86::xmm1, path);
-                            _ASM__vectorialProc(x86::xmm0, x86::xmm1, _OPMODE);
+                            x86::Gp res = _ASM__runOpCode(_OPMODE, x86::xmm0, x86::xmm1);
+                            if (res == x86::rax) {
+                                _ASM__movToReg(ret, res);
+                                goto _finishPointer8__eXMM_F;
+                            }
+                            _emitted_xmmOCX = false;
                             a->movd(x86::xmm0, ret);
                         } else {
                             // Uh oh
-                            _ASM__GPR_Proc(ret, path, _OPMODE);
+                            x86::Gp ret = _ASM__runOpCode(_OPMODE, ret, path);
                             _use_ret_reg = true;
                         }
+                        _finishPointer8__eXMM_F:
                         qlog0._log2("END [Arithmetic OPMODE]\n");
                     }
                     if (_notOpCode) {
@@ -1442,6 +1512,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                     
                     break;
                 } else if (pointer->LuaTYPE == 2) {
+                    
                     if (_OPMODE != _L_NONE) {
                         // Holy checks..
                         // wanna had a good time? Go to @case _L_STRING: {
@@ -1643,6 +1714,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                             break;
                         }
                         a->movd(ret, x86::xmm0);
+                        _emitted_xmmOCX = false;
                         break;
                     }
                     if (q0 != x86::noReg) {
@@ -1681,7 +1753,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                                 }
                                 a->movd(q0, x86::xmm0);
                             } else { // Transform current to xmm & move.
-                                a->movabs(x86::r9, (uint64_t)std::stod(std::string(pointer->_data.begin(), pointer->_data.end())));
+                                a->movabs(x86::r9, (uint64_t)std::stoi(std::string(pointer->_data.begin(), pointer->_data.end())));
                                 a->movd(x86::xmm1, x86::r9);
                                 a->movd(x86::xmm0, q0);
                                 x86::Gp reg = _ASM__runOpCode(_OPMODE, x86::xmm0, x86::xmm1);
@@ -1691,6 +1763,20 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                                     break;
                                 }
                                 a->movd(q0, x86::xmm0);
+                            }
+                        } else {
+                            // Leave the work to _ASM__runOpCode.
+                            if (pointer->ATTRIB) {
+                                a->movabs(x86::r9, (uint64_t)std::stod(std::string(pointer->_data.begin(), pointer->_data.end())));
+                                a->movd(x86::xmm1, x86::r9);
+                                x86::Gp res = _ASM__runOpCode(_OPMODE, q0, x86::xmm1, true, false);
+                                q0 = x86::noReg;
+                                _ASM__movToReg(ret, res);
+                            } else {
+                                a->movabs(x86::r9, (uint64_t)std::stoi(std::string(pointer->_data.begin(), pointer->_data.end())));
+                                x86::Gp res = _ASM__runOpCode(_OPMODE, q0, x86::r9, false, false);
+                                q0 = x86::noReg;
+                                _ASM__movToReg(ret, res);
                             }
                         }
                         break;

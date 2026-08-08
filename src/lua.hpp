@@ -218,7 +218,7 @@ extern std::string luaVarInfoToString(lua_VarOnMemInfo data);
 
 // Error handlers
 // This should had a mutexed variable which contains the backtrace of the crash
-enum lua_ErrSignals {
+enum lua_ErrSignals:uint64_t {
 	// Errors
 	_lua_es_NonFunction = 0,
 	_lua_es_ValueIsNil = 1,
@@ -913,6 +913,7 @@ LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *
 void _ASMH__rs_searchInTable(asmjit::x86::Gp tblPTR, std::pair<bool, std::pair<asmjit::x86::Gp, TString*>> key, asmjit::x86::Gp toGp, bool pointer = false);
 void _HELPER__runHooksFor(asmjit::x86::Gp rId, _R_CONTENTS id);
 inline void __ASM_callback_nothing_(asmjit::x86::Assembler *a, _REGISTER_ *reg) {}
+asmjit::x86::Gp _ASMH__parseVarCacheRef(uint8_t r);
 
 
 

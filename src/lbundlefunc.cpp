@@ -3393,6 +3393,8 @@ int32_t _0_0_0_CMPTIME_ASM_localStackFrameBytes = 0;
 // ID = TString
 // scp = Operating Scope
 std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_Scope *scp, x86::Assembler *a, bool tb, bool f_mem, bool _Both) {
+    _HELPER__runHooksFor(x86::rdi, _R_TRASHDATA);
+    _HELPER__runHooksFor(x86::rsi, _R_TRASHDATA);
     lua_localSymbol var = acquireVariableFromExtensions(ID, scp);
     x86::Gp sReg = x86::noReg;
     if (!f_mem) { // Search from memory if false
@@ -3612,155 +3614,73 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
     if (Scope->HVtoCompiler.size() == 0) {
         return;
     }
-    //Time to update cache
+    // Update registers.
+    // Iterate with the first 4 items available on the scope side.
+    uint8_t _register_0 = 0;
+    std::vector<uint8_t> freeRegisters; // Search for free registers as we go. But do not delete those registers which we need data.
+    //std::unordered_map<uint8_t, bool> _notAllowedHV;
+    bool canOccupyReg = true;
     uint8_t _register = 0;
-    uint8_t _c_0 = 0;
-    std::vector<uint8_t> skip;
-    // Should delete references those variables which are not hot in this Scope.
-    a->mov(x86::r9, (uint64_t)PTR_MASK);
-    while (_register < 4) {
-        // Search name.
-        lua_localSymbol *smb = Symbols->at(_register);
-        bool found = false;
-        for (uint8_t i = 0; i < 4; i++) {
-            std::string name = "";
-            try {
-                name = Scope->HVtoCompiler.at(_register).first;
-            } catch (std::out_of_range &e) {
-                break;
-            }
-            // Compare symbols
-            if (smb == nullptr)
-                continue;
-            if (smb->id == name) {
-                found = true;
-            }
-        }
-        if (!found) {
-            // Purge this register.
-            x86::Gp toReg;
-            switch (_register) {
-                case 0: {
-                    toReg = x86::r12;
-                    break;
-                }
-                case 1: {
-                    toReg = x86::r13;
-                    break;
-                }
-                case 2: {
-                    toReg = x86::r14;
-                    break;
-                }
-                case 3: {
-                    toReg = x86::r15;
-                    break;
-                }
-            }
-            if (smb != nullptr) {
-                _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(smb->id), Scope, a, true, true);
-                a->mov(x86::qword_ptr(x86::rdi), toReg);
-                smb->cacheReg = 0;
-            }
-            a->xor_(toReg, toReg);
-            Symbols->at(_register) = nullptr;
-        } else {
-            skip.push_back(_register); // Ignored by other loop.
-        }
-        //
-        _register++;
-    }
-    _register = 0;
-    while (_register < 4) {
-        for (uint8_t i: skip) {
-            if (i == _register) {
-                _register++;
-                continue;
-            }
-        }
-        std::string vname;
+    lua_localSymbol *sym = nullptr;
+    while (_register_0 < 4) {
+        // Get name
+        std::string name;
         try {
-            vname = Scope->HVtoCompiler.at(_register).first;
-        } catch (std::out_of_range &e) {
-            break;
+            auto _item = Scope->HVtoCompiler.at(_register_0);
+            name = _item.first;
+        } catch (std::out_of_range &e) {break;}
+        // Proceed.
+        canOccupyReg = true;
+        _register = 0;
+        sym = nullptr;
+        while (_register < 4) {
+            try {
+                sym = Symbols->at(_register);
+            } catch (std::out_of_range &e) {break;}
+            if (sym != nullptr && sym->id == name) {
+                canOccupyReg = false;
+            }
+            _register++;
         }
-        std::cout << "VarName to Save: " << vname << " " << std::to_string(_c_0) << " Size=" <<Scope->HVtoCompiler.size() << " R=" << std::to_string(_register) << std::endl;
-        _c_0++;
-        uint8_t got = 0;
-        for (auto &e: *Symbols) {
-            if (e.second == nullptr) {
-                break;
+        if (canOccupyReg) {
+            // Free the register and save their value.
+            if (sym != nullptr && sym->cacheReg > 0) {
+                _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(sym->id), Scope, a, true, true);
+                // Must put their type back.
+                //a->mov(x86::rsi, );
+                a->mov(x86::qword_ptr(x86::rdi), _ASMH__parseVarCacheRef(sym->cacheReg+1));
+                sym->cacheReg = 0;
             }
-            if (e.second->id == vname) {
-                got = e.first; // Skip if it exists
-                break;
-            }
+            freeRegisters.push_back(_register_0);
+            //_notAllowedHV[_register_0] = true;
         }
-        if (got == 0) {
-            // Gotta put this.
-            // Save the variable standing in this register [got]
-            lua_localSymbol *smb = Symbols->at(_register);
-            if (smb != nullptr && !smb->id.empty()) {
-                qlog0._log2(std::string(std::string("updateCacheRegisters::Save: ") + smb->id.c_str() + std::string("\n")).c_str());
-                _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(smb->id), Scope, a, true, true);
-                x86::Gp toReg;
-                smb->cacheReg = 0;
-                switch (_register) {
-                    case 0: {
-                        toReg = x86::r12;
-                        break;
-                    }
-                    case 1: {
-                        toReg = x86::r13;
-                        break;
-                    }
-                    case 2: {
-                        toReg = x86::r14;
-                        break;
-                    }
-                    case 3: {
-                        toReg = x86::r15;
-                        break;
-                    }
-                }
-                a->mov(x86::qword_ptr(x86::rdi), toReg);
+        _register_0++;
+    }
+    if (freeRegisters.size() == 0)
+        return;
+    // Use freed registers.
+    uint8_t _c = 0;
+    bool _putMaskIfUsed = false;
+    while (_c < 4) {
+        std::string name;
+        try {
+            auto _item = Scope->HVtoCompiler.at(_c);
+            name = _item.first;
+        } catch (std::out_of_range &e) {break;}
+        lua_localSymbol *slot = acquireVariableFromExtensionsPtr(name, Scope);
+        if (slot->cacheReg == 0) {
+            if (!_putMaskIfUsed) {
+                a->mov(x86::r9, (uint64_t)PTR_MASK);
+                _putMaskIfUsed = true;
             }
-            if (smb != nullptr && smb->id == vname) {
-                _register++;
-                continue;
-            }
-            lua_localSymbol *toUse = acquireVariableFromExtensionsPtr(vname, Scope);
-            toUse->cacheReg = _register+1;
-            if (toUse->qID == 3) {
-                _register++;
-                continue; // Do not allow this.
-            }
-            qlog0._log2(std::string(std::string("updateCacheRegisters::Get: ") + toUse->id.c_str() + std::string("\n")).c_str());
-            _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(toUse->id), Scope, a, false, true);
-            x86::Gp toReg;
-            switch (_register) {
-                case 0: {
-                    toReg = x86::r12;
-                    break;
-                }
-                case 1: {
-                    toReg = x86::r13;
-                    break;
-                }
-                case 2: {
-                    toReg = x86::r14;
-                    break;
-                }
-                case 3: {
-                    toReg = x86::r15;
-                    break;
-                }
-            }
+            _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(slot->id), Scope, a, false, true);
             a->and_(x86::rdi, x86::r9);
-            a->mov(toReg, x86::rdi);
-            Symbols->at(_register) = toUse;
+            uint8_t regId = freeRegisters.back();
+            freeRegisters.pop_back();
+            a->mov(_ASMH__parseVarCacheRef(regId+1), x86::rdi);
+            slot->cacheReg = regId+1;
         }
-        _register++;
+        _c++;
     }
 }
 
@@ -4123,6 +4043,16 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 //_F_ASM_MultiUse_EvalUntil(&cache.p.at(0), &a, ActualScope, _L_NONE, &_UNK, false, 0);
                 qlog0._log2("if() start\n");
                 qlog0._log2("if() start::data\n");
+                qlog0._log2("if() start::data::size() = ");
+                qlog0._log2(std::to_string(cache.p.at(0).size()).c_str());
+                qlog0._log2("\n");
+                qlog0._log2("if() start::data::data[$]() = ");
+                for (LuaLexFrame &i: cache.p.at(0)) {
+                    qlog0._log2("$[");
+                    qlog0._log2(std::to_string(i.key).c_str());
+                    qlog0._log2("] ");
+                }
+                qlog0._log2("\n");    
                 x86::Gp reg = CLUA_EvalExprNReturn(&cache.p.at(0), ActualScope, std::pair<bool, x86::Gp>(false, x86::noReg), false, true);
                 qlog0._log2("if() start::endData\n");
                 // Let's see...

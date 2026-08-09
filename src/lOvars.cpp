@@ -161,7 +161,7 @@ std::vector<lua_biOpCode> *lua_Scope::updateHottestVariablesForKeys(lua_Scope *M
                     break;
                 }
                 // Let's check their path.
-                std::string _s0 = opcode->path->getHeaderVarString();
+                std::string _s0 = opcode->LLF.at(0).addr->getHeaderVarString();
                 // Okay.
                 _H_ADD_TO_HOTTESTVARIABLESNPROC(actualScope, _s0, actualScope);
                 break;

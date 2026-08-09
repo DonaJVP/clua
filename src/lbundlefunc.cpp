@@ -152,46 +152,6 @@ uint8_t searchForValuesOutSideNestedFunc(std::string stringID, lua_Scope *T) {
     }
 }
 
-// Function bundle.
-
-//LuaLexFrame = Start of the vector,
-std::pair<LuaLexFrame, std::vector<LuaLexFrame>> variableOpChain(std::vector<LuaLexFrame> *Keys, uint32_t *pos) {
-    //Should start at _L_VARNAME
-    std::vector<LuaLexFrame> FRAMES;
-    LuaLexFrame F;
-    LuaLexFrame F0;
-    bool _atr = 0;
-    F0 = Keys->at(*pos);
-    *pos = *pos+1; // DO NOT RESEARCH ON BAD MEMORY!
-    while (true) {
-        try {
-            F = Keys->at(*pos);
-            *pos = *pos+1;
-        } catch (std::out_of_range &e) {
-            // huff puff
-        }
-        if (_atr == 1) {
-            FRAMES.push_back(F);
-            if (F.key == _L_ON_TO_GO_END)
-                _atr = 0;
-            continue;
-        }
-        switch (F.key) {
-            case _L_VARNAME: {
-                FRAMES.push_back(F);
-                break;
-            }
-            case _L_ON_TO_GO: {
-                _atr = F.ATTRIB;
-                FRAMES.push_back(F);
-                break;
-            }
-            default: {
-                return {F0, FRAMES};
-            }
-        }
-    }
-}
 
 //(std::vector<LuaLexFrame> *Keys, LuaTableBase *ENV, uint32_t _LINES, uint32_t &pos) {
 void lua_CheckIfOnList(const std::string it, std::vector<std::string> *TR) {
@@ -200,70 +160,6 @@ void lua_CheckIfOnList(const std::string it, std::vector<std::string> *TR) {
             return;
     }
     TR->push_back(it);
-}
-
-//Eval 'for' expression
-int lua_evalForExpressionNgetVars(lua_Expression *a, lua_Scope *nextScope) {
-    if (a->size() == 1) {
-        if (a->front().size() > 0) {
-            LuaLexFrame k0 = a->front().front();
-            if (k0.key == _L_VARNAME) {
-                std::string nm_ = std::string(k0._data.begin(), k0._data.end());
-                lua_localSymbol K;
-                K.cacheReg = 0;
-                K.id = nm_;
-                K.qID = 2;
-                K.slot = (nextScope->count+1)*8;
-                nextScope->symbols.insert(std::pair<std::string, lua_localSymbol>(nm_, K));
-                nextScope->count++;
-            } else {
-                m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("At eval expr for 'For': No varname?"));
-                m_LuaErrorHandler->setFatal(true);
-                return 1;
-            }
-        }
-    } else if (a->size() > 1) {
-        // More terms...
-        if (a->at(0).size() == 1) {
-            LuaLexFrame k0 = a->front().front();
-            if (k0.key == _L_VARNAME) {
-                std::string nm_ = std::string(k0._data.begin(), k0._data.end());
-                lua_localSymbol K;
-                K.cacheReg = 0;
-                K.id = nm_;
-                K.qID = 2;
-                K.slot = (nextScope->count+1)*8;
-                nextScope->symbols.insert(std::pair<std::string, lua_localSymbol>(nm_, K));
-                nextScope->count++;
-            } else {
-                m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("At eval expr for 'For': No varname?"));
-                m_LuaErrorHandler->setFatal(true);
-                return 1;
-            }
-        }
-        if (a->at(1).size() > 0) {
-            LuaLexFrame k0 = a->at(1).front();
-            if (k0.key == _L_VARNAME) {
-                std::string nm_ = std::string(k0._data.begin(), k0._data.end());
-                lua_localSymbol K;
-                K.cacheReg = 0;
-                K.id = nm_;
-                K.qID = 2;
-                K.slot = (nextScope->count+1)*8;
-                nextScope->symbols.insert(std::pair<std::string, lua_localSymbol>(nm_, K));
-                nextScope->count++;
-            } else {
-                m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("At eval expr for 'For': No varname?"));
-                m_LuaErrorHandler->setFatal(true);
-                return 1;
-            }
-        }
-    } else {
-        m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("At eval expr for 'For': No expressions?"));
-        m_LuaErrorHandler->setFatal(true);
-        return 1;
-    }
-    return 0;
 }
 
 void lua_checkPathNupdateHV(lua_AddrPath *P, std::unordered_map<std::string, uint32_t> *hv, std::vector<std::string> *TR, lua_Scope *S) {
@@ -316,281 +212,6 @@ void lua_checkExprData(lua_Expression *expr, lua_Scope *S, std::vector<std::stri
             _ps1l++;
         }
         _ps1++;
-    }
-}
-
-// transform a.b.c["huh"] to _L_PATH
-std::vector<LuaLexFrame> lua_AcquireNassembleLuaPath(std::vector<LuaLexFrame> *K, uint32_t *pos, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv) { //melting down...
-    std::vector<LuaLexFrame> toReturn;
-    LuaLexFrame F;
-    bool ontogo_last = false;
-    LuaLexFrame *PTR_TO_LAST = nullptr;
-    bool d = false;
-    while (true) {
-        try {
-            F = K->at(*pos);
-        } catch (std::out_of_range &e) {
-            goto __FINISH__;
-        }
-        switch (F.key) {
-            case _L_VARNAME: {
-                std::string a = std::string(F._data.begin(), F._data.end());
-                if (!d) {
-                    lua_CheckIfOnList(a, TR);
-                    d = true;
-                }
-                toReturn.push_back(F);
-                if (hv->find(a) != hv->end()) {
-                    hv->at(a) = hv->at(a) + 1;
-                } else {
-                    //Maybe on another.... Scope?
-                    lua_Scope *CACHE = S->rSCOPE;
-                    while (true) {
-                        if (CACHE != nullptr) {
-                            if (CACHE->HottestVariables.find(a) != CACHE->HottestVariables.end()) {
-                                CACHE->HottestVariables.at(a) = CACHE->HottestVariables.at(a) + 1;
-                                hv->insert(std::pair<std::string, uint32_t>(a, CACHE->HottestVariables.at(a))); // Include this so we can put a 'equal' to the actual scope
-                                break;
-                            }
-                        } else {
-                            hv->insert(std::pair<std::string, uint32_t>(a, 1)); //Huh?
-                            break;
-                        }
-                    }
-                }
-                break;
-            }
-            case _L_ON_TO_GO: {
-                if (F.ATTRIB) { // ==1
-                    *pos = *pos + 1;
-                    std::vector<LuaLexFrame> _0 = lua_AcquireNAssembleLuaExprBRKT(K, pos, S, TR, hv);
-                    LuaLexFrame J;
-                    J.key = _L_EXPRESSION_BRKT;
-                    J.EXPR_BRKT = _0;
-                    toReturn.push_back(J);
-                    ontogo_last = true;
-                    PTR_TO_LAST = &J;
-                } else {
-                    toReturn.push_back(F);
-                }
-                break;
-            }
-            default: {
-                *pos = *pos - 1;
-                goto __FINISH__;
-            }
-        }
-        *pos = *pos + 1;
-    }
-    __FINISH__:
-    //Define a boolean in the last key just for address <if specified>
-    if (!ontogo_last)
-        toReturn.at(toReturn.size()-1)._LK = true;
-    else {
-        PTR_TO_LAST->_LK = true;
-    }
-    return toReturn;
-}
-
-// transform [a or b and c] to _L_EXPRESSION_BRKT
-std::vector<LuaLexFrame> lua_AcquireNAssembleLuaExprBRKT(std::vector<LuaLexFrame> *Keys, uint32_t *pos, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv) {
-    LuaLexFrame F;
-    std::vector<LuaLexFrame> _R;
-    while (true) {
-        try {
-            F = Keys->at(*pos);
-        } catch (std::out_of_range &e) {
-            return _R;
-        }
-        switch (F.key) {
-            case _L_VARNAME: {
-                std::vector<LuaLexFrame> _0 = lua_AcquireNassembleLuaPath(Keys, pos, S, TR, hv);
-                LuaLexFrame _139491192;
-                _139491192.key = _L_PATH;
-                _139491192.EXPR_BRKT = _0;
-                _139491192.subkey = _0.at(0).subkey;
-                _R.push_back(_139491192); //melting down
-                break;
-            }
-            case _L_FUNCTION: {
-                // This case should be handled back by other function, else this will collision with out definitions and we will be dead.
-                lua_Scope *nsc = new lua_Scope();
-                nsc->rSCOPE = S;
-                nsc->lSCOPE = std::vector<lua_Scope*>();
-                
-                //Must see if theres _L_F_ARGS_START
-                try {
-                    LuaLexFrame g;
-                    g = Keys->at(*pos+1);
-                    if (g.key != _L_F_ARGS_START) {
-                        // Crash
-                    } else {
-                        *pos = *pos + 1;
-                        lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, S, TR, hv);
-                        uint32_t cnt_scope = 0;
-                        for (std::vector<LuaLexFrame> &I: a) {
-                            if (I.at(0).key == _L_VARNAME) {
-                                cnt_scope = cnt_scope+0+1; // base_scope can't be used here
-                                lua_localSymbol j;
-                                j.qID = 1;
-                                j.slot = cnt_scope*8;
-                                j.id = std::string(I.at(0)._data.begin(), I.at(0)._data.end());
-                                nsc->symbols.insert(std::pair<std::string, lua_localSymbol>(std::string(I.at(0)._data.begin(), I.at(0)._data.end()), j));
-                            } else {
-                                // Crash
-                            }
-                        }
-                    }
-                } catch (std::exception &e) {
-                    //Crash
-                }
-                
-                std::vector<lua_biOpCode> *OPC = new std::vector<lua_biOpCode>(lua_B_F_OP(Keys, pos, nsc, true));
-                lua_biOpCode *c = new lua_biOpCode();
-                c->OPCODE = l_b_o_c_FUN;
-                c->FuncPTR2 = OPC;//luaBundleFunction(OPC, nsc, true);
-                c->_F_LOCAL = false;
-                c->toMemOffset = 0;
-                LuaLexFrame FR_M;
-                FR_M.key = _L_FUNCTIONPOINTER;
-                FR_M._OPCODE = c;
-                _R.push_back(FR_M);
-                break;
-            }
-            case _L_F_ARGS_START: {
-                lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, S, TR, hv);
-                LuaLexFrame b;
-                b.key = _L_EXPRESSION;
-                b.EXPR = a;
-                _R.push_back(b);
-                break;
-            }
-            case _L_ON_TO_GO: {
-                if (F.ATTRIB != 1) {
-                    _R.push_back(F);
-                    break;
-                }
-                *pos = *pos + 1;
-                // Mustlua_AcquireNAssembleLuaExpr start over other.
-                std::vector<LuaLexFrame> a = lua_AcquireNAssembleLuaExprBRKT(Keys, pos, S, TR, hv);
-                LuaLexFrame b;
-                b.key = _L_EXPRESSION_BRKT;
-                b.EXPR_BRKT = a;
-                _R.push_back(b);
-                break;
-            }
-            case _L_ON_TO_GO_END: {
-                *pos = *pos + 1;
-                return _R;
-            }
-            default: {
-                _R.push_back(F);
-            }
-        }
-        *pos = *pos + 1;
-    }
-}
-
-// transform from (1, 2, 3, a or c) to _L_EXPRESSION
-lua_Expression lua_AcquireNAssembleLuaExpr(std::vector<LuaLexFrame> *Keys, uint32_t *pos, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv) {
-    LuaLexFrame F;
-    std::vector<std::vector<LuaLexFrame>> _R;
-    _R.push_back(std::vector<LuaLexFrame>());
-    uint16_t leveling = 0;
-    while (true) {
-        try {
-            F = Keys->at(*pos);
-        } catch (std::out_of_range &e) {
-            return _R;
-        }
-        switch (F.key) {
-            case _L_VARNAME: {
-                std::vector<LuaLexFrame> _0 = lua_AcquireNassembleLuaPath(Keys, pos, S, TR, hv);
-                LuaLexFrame _139491192;
-                _139491192.key = _L_PATH;
-                _139491192.EXPR_BRKT = _0;
-                _139491192.subkey = _0.at(0).subkey;
-                _R.at(leveling).push_back(_139491192); //melting down
-                break;
-            }
-            case _L_FUNCTION: {
-                // This case should be handled back by other function, else this will collision with out definitions and we will be dead.
-                lua_Scope *nsc = new lua_Scope();
-                nsc->rSCOPE = S;
-                nsc->lSCOPE = std::vector<lua_Scope*>();
-                //Must see if theres _L_F_ARGS_START
-                try {
-                    LuaLexFrame g;
-                    g = Keys->at(*pos+1);
-                    if (g.key != _L_F_ARGS_START) {
-                        // Crash
-                    } else {
-                        *pos = *pos + 1;
-                        lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, S, TR, hv);
-                        uint32_t cnt_scope = 0;
-                        for (std::vector<LuaLexFrame> &I: a) {
-                            if (I.at(0).key == _L_VARNAME) {
-                                cnt_scope = cnt_scope+0+1; // base_scope can't be used here
-                                lua_localSymbol j;
-                                j.qID = 1;
-                                j.slot = cnt_scope*8;
-                                j.id = std::string(I.at(0)._data.begin(), I.at(0)._data.end());
-                                nsc->symbols.insert(std::pair<std::string, lua_localSymbol>(std::string(I.at(0)._data.begin(), I.at(0)._data.end()), j));
-                            } else {
-                                // Crash
-                            }
-                        }
-                    }
-                } catch (std::exception &e) {
-                    //Crash
-                }
-                std::vector<lua_biOpCode> *OPC = new std::vector<lua_biOpCode>(lua_B_F_OP(Keys, pos, nsc, true));
-                lua_biOpCode *c = new lua_biOpCode();
-                c->OPCODE = l_b_o_c_FUN;
-                c->FuncPTR2 = OPC;//luaBundleFunction(OPC, nsc, true);
-                c->_F_LOCAL = false;
-                c->toMemOffset = 0;
-                LuaLexFrame FR_M;
-                FR_M.key = _L_FUNCTIONPOINTER;
-                FR_M._OPCODE = c;
-                _R.at(leveling).push_back(FR_M);
-                break;
-            }
-            case _L_ON_TO_GO: {
-                if (F.ATTRIB == 1) {
-                    *pos = *pos + 1;
-                    std::vector<LuaLexFrame> a = lua_AcquireNAssembleLuaExprBRKT(Keys, pos, S, TR, hv);
-                    LuaLexFrame b;
-                    b.key = _L_EXPRESSION_BRKT;
-                    _R.at(leveling).push_back(b);
-                    break;
-                }
-            }
-            case _L_F_ARGS_START: {
-                // Must lua_AcquireNAssembleLuaExpr start over other.
-                *pos = *pos + 1;
-                lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, S, TR, hv);
-                LuaLexFrame b;
-                b.key = _L_EXPRESSION;
-                b.EXPR = a;
-                _R.at(leveling).push_back(b);
-                break;
-            }
-            case _L_F_ARGS_END: {
-                //*pos = *pos + 1;
-                return _R;
-            }
-            case _L_SEPARATOR: {
-                _R.push_back(std::vector<LuaLexFrame>());
-                leveling++;
-                break;
-            }
-            default: {
-                _R.at(leveling).push_back(F);
-                break;
-            }
-        }
-        *pos = *pos + 1;
     }
 }
 
@@ -920,104 +541,6 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                 opcodes.push_back(t);
                 break;
             }
-            /*case _L_F_ARGS_START: {
-                _D_F_I = false;
-                _F_F_0 = true;
-                // Check if it are a function call. Must be separated.
-                multicache.resize(multicache.size()+1);
-                multicache.at(multicache.size()) = std::vector<LuaLexFrame>();
-                //multicache.at(multicache.size())[] // EXAMPLE
-                _to_close_args++;
-                *pos = *pos + 1;
-                lua_Expression a = lua_AcquireNAssembleLuaExpr(Keys, pos, _LastBLOCK, &toRecover, &_LastBLOCK->HottestVariables);
-                if (_D_F_I) {
-                    //Function definition
-                    lua_Scope *nsc = new lua_Scope();
-                    nsc->rSCOPE = _LastBLOCK;
-                    nsc->lSCOPE = std::vector<lua_Scope*>();
-                    uint32_t cnt_scope = 0;
-                    for (std::vector<LuaLexFrame> &I: a) {
-                        if (I.at(0).key == _L_VARNAME) {
-                            lua_localSymbol o;
-                            o.qID = 1;
-                            o.slot = cnt_scope*8;
-                            o.id = std::string(I.at(0)._data.begin(), I.at(0)._data.end());
-                            nsc->symbols.insert(std::pair<std::string, lua_localSymbol>(std::string(I.at(0)._data.begin(), I.at(0)._data.end()), o));
-                            cnt_scope = cnt_scope+0+1; // base_scope can't be used here
-                        } else {
-                            // Crash
-                        }
-                    }
-                    nsc->toEXbytes = cnt_scope*8; // Limit.
-                    if (!_ONLYFUNC)
-                        nsc->rSCOPE->_001 = true;
-                    //Bundle.
-                    pos++;
-                    std::vector<lua_biOpCode> *OPC = new std::vector<lua_biOpCode>(lua_B_F_OP(Keys, pos, nsc, true, _ONLYFUNC));
-                    lua_biOpCode c;
-                    c.OPCODE = l_b_o_c_FUN;
-                    c.FuncPTR2 = OPC;//luaBundleFunction(OPC, nsc, true);
-                    c.LLF = cache;
-                    c._F_LOCAL = _declr_L;
-                    
-                    
-                    // May put on first top
-                    
-                    if (_declr_L) {
-                        LuaLexFrame __F = cache[0];
-                        size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
-                        _LastBLOCK->count++;
-                        
-                        lua_localSymbol o;
-                        o.slot = slot;
-                        o.qID = 0;
-                        o.id = std::string(__F._data.begin(), __F._data.end());
-                        
-                        t_->insert(std::pair<std::string, lua_localSymbol>(std::string(__F._data.begin(), __F._data.end()), o));
-                        _m_offset = slot;
-                        
-                        if (slot >= to_reserv)
-                            to_reserv = slot; //mmap
-                    }
-                    
-                    cache.clear();
-                    c.toMemOffset = _m_offset;
-                    opcodes.push_back(c);
-                } else {
-                    // Call part (Yes.)
-                    if (!cache.empty()) {
-                        // Has var dir
-                        lua_biOpCode c;
-                        c.OPCODE = l_b_o_c_CFN;
-                        c.LLF = cache; // Call dir
-                        c.p = a;
-                        opcodes.push_back(c);
-                    } else {
-                        if (_for_declr_got) {
-                            bool res = lua_evalForExpressionNgetVars(&a, _LastBLOCK); // Just a few declarations...
-                            if (res) {
-                                //Something crashed. return null
-                                return std::vector<lua_biOpCode>({ lua_biOpCode(l_b_o_c_NOP)});
-                            }
-                            _for_declr_got = false;
-                        }
-                        // If empty, it should be like this expression: (a and b or c)
-                        if (opcodes.at(opcodes.size()-2).OPCODE == l_b_o_c_FUN) {
-                            // Backwards compatibilty
-                            lua_biOpCode c;
-                            c.OPCODE = l_b_o_c_CFN;
-                            c.p = a;
-                            opcodes.push_back(c);
-                            break;
-                        }
-                        lua_biOpCode c;
-                        c.OPCODE = l_b_o_c_RLE;
-                        c.p = a;
-                        opcodes.push_back(c);
-                    }
-                }
-                break;
-            }*/
             case _L_FUNCTION: {
                 if (_FRM.ATTRIB > 0) {
                     lua_Expression args = _FRM.EXPR;
@@ -1051,6 +574,7 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                                 sym.slot = _counter2*8;
                             }
                             sym.id = _LABEL->addr->getHeaderVarString();
+                            m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, std::string("FFF_C: ")+std::to_string(sym.slot)+", "+sym.id);
                             startPoint->symbols.insert(std::pair<std::string, lua_localSymbol>(sym.id, sym));
                             _current++;
                         }
@@ -1082,7 +606,12 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
             case _L_CALL: {
                 lua_biOpCode c;
                 if (_FRM.ATTRIB == 0) {
-                    c.path = _FRM.addr;
+                    std::vector<LuaLexFrame> _vct;
+                    LuaLexFrame Path;
+                    Path.addr = _FRM.addr;
+                    Path.key = _L_PATH;
+                    _vct.push_back(Path);
+                    c.LLF = std::move(_vct);
                     c.ATR = 0;
                     c.fixedaddr = _FRM.skipcheck ? ((uint64_t)_FRM.a) : 0;
                 } else {
@@ -1150,12 +679,18 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                     }
                     if (_s1->size() > 0) {
                         LuaLexFrame *_s2 = nullptr;
+                        LuaLexFrame *_s3 = nullptr;
                         try {
                             _s2 = &_s1->at(0);
                         } catch (std::out_of_range &e) {
                             goto _ENDZONE;
                         }
-                        if (_s2->key == _L_PATH) {
+                        try {
+                            _s3 = &_s1->at(1);
+                        } catch (std::out_of_range &e) {
+                            goto _ENDZONE;
+                        }
+                        if (_s2->key == _L_PATH && _s3->key == _L_IN) {
                             _tS1 = _s2;
                             LuaLexFrame HEADER = *_s2->addr->getHeader();
                             size_t slot = (_LastBLOCK->base_slot+_LastBLOCK->count+1)*8;
@@ -1189,7 +724,7 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                 if (_tS1 != nullptr) {
                     toSPT.push_back(*_tS1);
                 }
-                c.LLF = toSPT;
+                //c.LLF = toSPT; //NOTE: Obsolete toSPT
                 opcodes.push_back(c);
                 break; 
             }
@@ -1384,8 +919,8 @@ lua_localSymbol acquireVariableFromExtensions(TString *stringID, lua_Scope *T) {
 // ASM
 
 std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_Scope *scp, x86::Assembler *a, bool tb, bool f_mem, bool _Both = false);
-void _F_ASM_MultiUse_EvalUntil(std::vector<LuaLexFrame> *Keys, x86::Assembler *a, lua_Scope *AS, _Lua_Lex_Keys stop, LuaType *FINALTYPE, bool stackptrReq = false, uint64_t stacksize = 0);
-void _F_ASM_SEARCHVALUE(std::vector<LuaLexFrame> *Keys, uint32_t *pos, x86::Assembler *a, lua_Scope *AS, bool tb);
+//void _F_ASM_MultiUse_EvalUntil(std::vector<LuaLexFrame> *Keys, x86::Assembler *a, lua_Scope *AS, _Lua_Lex_Keys stop, LuaType *FINALTYPE, bool stackptrReq = false, uint64_t stacksize = 0);
+//void _F_ASM_SEARCHVALUE(std::vector<LuaLexFrame> *Keys, uint32_t *pos, x86::Assembler *a, lua_Scope *AS, bool tb);
 
 void _F_ASM_CRASH(const lua_ErrSignals ERR, TString *str) {
     m_LuaErrorHandler->reportError(ERR, 0, std::string(str->data, str->len));
@@ -1542,6 +1077,7 @@ std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_
     _HELPER__runHooksFor(x86::rdi, _R_TRASHDATA);
     _HELPER__runHooksFor(x86::rsi, _R_TRASHDATA);
     lua_localSymbol var = acquireVariableFromExtensions(ID, scp);
+    //DEBUG
     x86::Gp sReg = x86::noReg;
     if (!f_mem) { // Search from memory if false
         if (var.cacheReg > 0) {
@@ -1590,7 +1126,7 @@ std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_
                 a->mov(x86::rdi, x86::qword_ptr(x86::rsi, var.slot));
             break;
         }
-        case 2: { // rbp-512 = Locals
+        case 2: { // rbp-520+x = Locals
             if (!_0_0_0_CMPTIME_ASM_isScript) {
                 if (var.register_ != x86::rax) {
                     if (tb)
@@ -1599,6 +1135,7 @@ std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_
                         return {var.register_, x86::noReg};
                 }
                 a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -520));
+                
                 _continueSadly:
                 if (tb)
                     a->lea(x86::rdi, x86::qword_ptr(x86::rsi, -var.slot));
@@ -1731,6 +1268,8 @@ void frontNlowerPushes(x86::Assembler *a, std::vector<lua_biOpCode> *quote, bool
     if (code->ATR == 0) {
         if (!way) {
             a->pop(x86::rbx);
+        } else {
+            a->push(x86::rbx);
         }
         _upperVarsNotRequiredHighRegistersSlot = true;
         return;
@@ -1741,12 +1280,13 @@ void frontNlowerPushes(x86::Assembler *a, std::vector<lua_biOpCode> *quote, bool
         a->push(x86::r13);
         a->push(x86::r14);
         a->push(x86::r15);
+        a->push(x86::rbx);
     } else {
-        a->pop(x86::r12);
-        a->pop(x86::r13);
-        a->pop(x86::r14);
-        a->pop(x86::r15);
         a->pop(x86::rbx);
+        a->pop(x86::r15);
+        a->pop(x86::r14);
+        a->pop(x86::r13);
+        a->pop(x86::r12);
     }
 }
 
@@ -1784,17 +1324,29 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
                 sym = Symbols->at(_register);
             } catch (std::out_of_range &e) {break;}
             if (sym != nullptr && sym->id == name) {
+                qlog0._log2(">>> Can't occupy regSlot: ");
+                qlog0._log2(std::to_string(_register+1).c_str());
+                qlog0._log2("\n");
                 canOccupyReg = false;
             }
             _register++;
         }
+        qlog0._log2("Occupying for: ");
+        qlog0._log2(name.c_str());
+        qlog0._log2("\n");
         if (canOccupyReg) {
             // Free the register and save their value.
             if (sym != nullptr && sym->cacheReg > 0) {
+                qlog0._log2(">>> Saving ");
+                qlog0._log2(sym->id.c_str());
+                qlog0._log2("\n");
                 _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(sym->id), Scope, a, true, true);
                 // Must put their type back.
                 //a->mov(x86::rsi, );
                 a->mov(x86::qword_ptr(x86::rdi), _ASMH__parseVarCacheRef(sym->cacheReg+1));
+                qlog0._log2(">>> END SAVE ");
+                qlog0._log2(sym->id.c_str());
+                qlog0._log2("\n");
                 sym->cacheReg = 0;
             }
             freeRegisters.push_back(_register_0);
@@ -1819,12 +1371,18 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
                 a->mov(x86::r9, (uint64_t)PTR_MASK);
                 _putMaskIfUsed = true;
             }
+            qlog0._log2(">>> Loading ");
+            qlog0._log2(slot->id.c_str());
+            qlog0._log2("\n");
             _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(slot->id), Scope, a, false, true);
             a->and_(x86::rdi, x86::r9);
             uint8_t regId = freeRegisters.back();
             freeRegisters.pop_back();
             a->mov(_ASMH__parseVarCacheRef(regId+1), x86::rdi);
             slot->cacheReg = regId+1;
+            qlog0._log2(">>> Ended load ");
+            qlog0._log2(slot->id.c_str());
+            qlog0._log2("\n");
         }
         _c++;
     }
@@ -1920,6 +1478,14 @@ static std::string dumpinf1(std::vector<LuaLexFrame> *c) {
     return q0;
 }
 
+uint32_t _stackframe_getMaxValue(uint64_t args) {
+    uint64_t _aRes = args*8;
+    uint64_t res = 16;
+    while (true) {
+        
+    }
+}
+
 // Search if the var are in symbols.
 
 #include <deque>
@@ -1984,7 +1550,6 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     a.push(x86::rbp);
     a.mov(x86::rbp, x86::rsp);
     frontNlowerPushes(&a, _CODE, true);
-    a.push(x86::rbx);
     uint16_t persize = 0;
     std::unordered_map<std::string, uint16_t> _stack_mem;
     //Args = (FuncArgs*)rdi
@@ -1998,6 +1563,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     //Make a own mmap for this.
     lua_biOpCode tMem = _CODE->at(_CODE->size()-1);
     uint32_t s = tMem.size;
+    uint32_t finalAllocMem = 0;
     if (!Script) {
         //May sum some other bytes for those variables that are outside this @nested function
         bool _allocatedMemorySave = false;
@@ -2022,12 +1588,19 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 base = base + 8;
             }
             for (std::pair<std::string, lua_localSymbol> &j: Alloc) {
-                THREADRIPPER->symbols.insert(j);
+                //THREADRIPPER->symbols.insert(j);
             }
         }
         uint64_t *p = nullptr;
         uint32_t _offset = s;
-        a.sub(x86::rsp, 520 + s); // Cache; 128->256=stackarguments::16args
+        finalAllocMem = 520 + s + (THREADRIPPER->lvl*8);
+        // Check alignment of the stack.
+        if ((finalAllocMem & 0xF) == 0) {
+            finalAllocMem += 8;
+        }
+        //finalAllocMem = 0xFFFF;
+        a.sub(x86::rsp, finalAllocMem);
+        
         _0_0_0_CMPTIME_ASM_localStackFrameBytes -= 520;
         _0_0_0_CMPTIME_ASM_localStackFrameBytes -= s;
         a.mov(x86::rcx, (uint64_t)F_MEM_SCR);
@@ -2175,7 +1748,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 // The multideclaration method ONLY works for local variables.
                 // Now, let's eval the data to parse.
                 LuaType _UNK;
-                _F_ASM_MultiUse_EvalUntil(&cache.p.at(0), &a, ActualScope, _L_NONE, &_UNK, true, cache.fixedaddr);
+                //_F_ASM_MultiUse_EvalUntil(&cache.p.at(0), &a, ActualScope, _L_NONE, &_UNK, true, cache.fixedaddr);
                 // The data returned in rax should be a boolean and the data in the array... Already saved.
                 // The function executed will had in the third argument an array, which points directly into the variables so it should save it.
                 // Example: Address starting for local variables [3], slot 256 to 256+(8*3)
@@ -2455,7 +2028,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                             gpToUse = closures.back()._toCmp;
                         }
                         a.cmp(_uReg, gpToUse);
-                        a.jae(scopeBlocks.back().second);
+                        a.jge(scopeBlocks.back().second);
                         if (closures.back()._stepReg == x86::rax) { // Pointer
                             a.mov(x86::r8, static_cast<uint64_t>(closures.back().step_));
                             a.mov(x86::r8, x86::qword_ptr(x86::r8));
@@ -2484,7 +2057,8 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                                 gpToUse = closures.back()._toCmp;
                             }
                             a.cmp(x86::qword_ptr(register_.first), gpToUse);
-                            a.jae(scopeBlocks.back().second);
+                            a.jge(scopeBlocks.back().second);
+                            
                             if (closures.back()._stepReg == x86::rax) { // Pointer
                                 a.mov(x86::r8, static_cast<uint64_t>(closures.back().step_));
                                 a.mov(x86::r8, x86::qword_ptr(x86::r8));
@@ -2612,8 +2186,8 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         qlog0._log2("CallFunc( common )::Start\n");
                         uint32_t pos = 0;
                         //_F_ASM_SEARCHVALUE(cache.path->getData(), &pos, &a, ActualScope, false);
-                        abort();
-                        a.mov(x86::rbx, x86::rdi);
+                        x86::Gp reg = CLUA_EvalExprNReturn(&cache.LLF, ActualScope, std::pair<bool, x86::Gp>(true, x86::rbx), false);
+                        //a.mov(x86::rbx, reg);
                         //a.ud2(); 
                         _F_ASM_MAKEFUNCTIONARGUMENTS(&cache.p, &a, ActualScope, false, 0);
                         a.movabs(x86::rax, (uint64_t)0x0000FFFFFFFFFFFFULL);
@@ -2643,8 +2217,10 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     //Free those pointers.
     _END_:
     a.xor_(x86::rax, x86::rax);
+    a.add(x86::rsp, finalAllocMem);
     frontNlowerPushes(&a, _CODE, false);
-    a.leave();
+    a.mov(x86::rsp, x86::rbp);
+    a.pop(x86::rbp);
     a.ret();
     
     //Emit

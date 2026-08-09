@@ -1408,6 +1408,13 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                 stackRegCounter += 8+_q0;
                 break;
             }
+            case _L_VARNAME: {
+                qlog0._log2("\n### _L_VARNAME START ###\n");
+                // Only get the header. [Unique case.]
+                abort(); // Not allowed.
+                qlog0._log2("### _L_PATH END ###\n");
+                break;
+            }
             case _L_PATH: {
                 qlog0._log2("\n### _L_PATH START ###\n");
                 doomPath0 = pointer;

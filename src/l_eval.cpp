@@ -645,6 +645,13 @@ void _ASM__getContentsFromMGENERAL(TString *key, x86::Gp toGp, bool modify = fal
 // first=Register, second=High performance local register used
 std::pair<x86::Gp, bool> _ASM__searchSymbolToUse(x86::Gp toGp, TString *sym, lua_Scope *actScope, bool toModify = false) {
     std::string symSTR = std::string(sym->data, sym->len);
+    // First, search if it are saved on high speed vars (General variables)
+    lua_localSymbol *s_ = searchSavedGeneralVars(symSTR);
+    if (s_ != nullptr) {
+        if (s_->cacheReg > 0 && !toModify) {
+            return {_ASMH__parseVarCacheRef(s_->cacheReg), true};
+        }
+    }
     bool q0 = false;
     x86::Gp _R = toGp;
     if (actScope->symbols.find(symSTR) != actScope->symbols.end()) {
@@ -812,6 +819,7 @@ x86::Gp _ASM__runOpCode__checkArithmeticRegister__tInteger(x86::Gp reg) {
     a->mov(x86::rdi, _lua_es_InvalidType);
     a->call((uint64_t)_ASM__crash);
     a->bind(_B_isInteger);
+    return reg;
 }
 
 x86::Gp _ASM__runOpCode(_Lua_Lex_Keys opcode, Reg op0r, Reg op1r, bool check0 = true, bool check1 = true) {
@@ -874,8 +882,10 @@ x86::Gp _ASM__runOpCode(_Lua_Lex_Keys opcode, Reg op0r, Reg op1r, bool check0 = 
         } else {
             x86::Gp op0 = x86::Gp::make_r64(op0r.id());
             x86::Gp op1 = x86::Gp::make_r64(op1r.id());
-            _ASM__runOpCode__checkArithmeticRegister__tInteger(op0);
-            _ASM__runOpCode__checkArithmeticRegister__tInteger(op1);
+            if (check0)
+                _ASM__runOpCode__checkArithmeticRegister__tInteger(op0);
+            if (check1)
+                _ASM__runOpCode__checkArithmeticRegister__tInteger(op1);
             _ASM__GPR_Proc(op0, op1, opcode);
         }
         return x86::Gp::make_r64(op0r.id());

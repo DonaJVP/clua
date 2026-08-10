@@ -140,11 +140,13 @@ std::vector<lua_biOpCode> *lua_Scope::updateHottestVariablesForKeys(lua_Scope *M
                 // Nothing.
                 // The first two variables (If they exist..) we need to add a point.
                 actualScope = opcode->SCOPE;
-                if (opcode->LLF.empty())
-                    break;
-                for (LuaLexFrame &I:opcode->LLF) {
-                    //_H_ADD_TO_HOTTESTVARIABLESNPROC(actualScope, I.addr->getHeaderVarString(), actualScope);
-                    actualScope->HottestVariables.insert(std::pair<std::string, uint32_t>(I.addr->getHeaderVarString(), 100));
+                
+                for (std::vector<LuaLexFrame> &v: opcode->p) {
+                    for (LuaLexFrame &I: v) {
+                        if (I.key == _L_PATH) {
+                            actualScope->HottestVariables.insert(std::pair<std::string, uint32_t>(I.addr->getHeaderVarString(), 100));
+                        }
+                    }
                 }
                 break;
             }

@@ -1061,6 +1061,13 @@ void _F_ASM_MAKEFUNCTIONARGUMENTS(lua_Expression *Args, x86::Assembler *a, lua_S
     }
 }
 
+// Let's abuse a own compiler bug for optimized entries!
+std::unordered_map<std::string, lua_localSymbol*> _GENERAL_SAVEDVARS;
+lua_localSymbol *searchSavedGeneralVars(const std::string id) {
+    if (_GENERAL_SAVEDVARS.find(id) ==  _GENERAL_SAVEDVARS.end())
+        return nullptr;
+    return _GENERAL_SAVEDVARS.at(id);
+}
 
 static uint64_t PTRMASK = 0x0000FFFFFFFFFFFFULL;
 static uint64_t CNTMASK = 0xFFFF000000000000ULL;
@@ -1076,7 +1083,19 @@ int32_t _0_0_0_CMPTIME_ASM_localStackFrameBytes = 0;
 std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_Scope *scp, x86::Assembler *a, bool tb, bool f_mem, bool _Both) {
     _HELPER__runHooksFor(x86::rdi, _R_TRASHDATA);
     _HELPER__runHooksFor(x86::rsi, _R_TRASHDATA);
-    lua_localSymbol var = acquireVariableFromExtensions(ID, scp);
+    lua_localSymbol var;
+    lua_localSymbol *_HV_var = searchSavedGeneralVars(std::string(ID->data, ID->len));
+    if (_HV_var != nullptr) {
+        if (tb)
+            goto _getNormalPointer;
+        var = *_HV_var;
+    } else {
+        _getNormalPointer:
+        var = acquireVariableFromExtensions(ID, scp);
+    }
+    if (var.qID == 3 && var.slot == 0) {
+        var.slot = (uint64_t)ID;
+    }
     //DEBUG
     x86::Gp sReg = x86::noReg;
     if (!f_mem) { // Search from memory if false
@@ -1100,7 +1119,7 @@ std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_
                     break;
                 }
             }
-            a->mov(x86::rdi, toReg);
+            //a->mov(x86::rdi, toReg);
             return {toReg, x86::noReg};
         }
     }
@@ -1134,9 +1153,8 @@ std::pair<x86::Gp, x86::Gp> _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(TString *ID, lua_
                     if (lua_Registers.at(_CPP_getRegisterFromASM(var.register_)).cntId == _R_FUNC_ARGS_ENTRY)
                         return {var.register_, x86::noReg};
                 }
-                a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -520));
-                
                 _continueSadly:
+                a->lea(x86::rsi, x86::qword_ptr(x86::rbp, -520));
                 if (tb)
                     a->lea(x86::rdi, x86::qword_ptr(x86::rsi, -var.slot));
                 else
@@ -1247,14 +1265,6 @@ uint8_t _getForTypeExpression(lua_Expression *K) {
     return 0;
 }
 
-//NOTE: OBSOLETE
-void updateFrameGp(x86::Assembler *a, x86::Gp gp, lua_localSymbol *SM, lua_Scope *S, TString *name) {
-    //That frame should be updated with the big environment
-    SM->cacheReg = 0;
-    _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(name, S, a, true, true);
-    a->mov(x86::qword_ptr(x86::rdi), gp);
-}
-
 static bool _upperVarsNotRequiredHighRegistersSlot = true;
 
 void frontNlowerPushes(x86::Assembler *a, std::vector<lua_biOpCode> *quote, bool way) {
@@ -1297,9 +1307,6 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
     if (_upperVarsNotRequiredHighRegistersSlot) {
         return;
     }
-    if (Scope->HVtoCompiler.size() == 0) {
-        return;
-    }
     // Update registers.
     // Iterate with the first 4 items available on the scope side.
     uint8_t _register_0 = 0;
@@ -1308,6 +1315,32 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
     bool canOccupyReg = true;
     uint8_t _register = 0;
     lua_localSymbol *sym = nullptr;
+    std::unordered_map<uint8_t, bool> _optRegisterAlloc;
+    // if (Scope->HVtoCompiler.size() == 0) {
+        for (uint8_t i = 0; i < 4; i++) {
+            lua_localSymbol *sym = Symbols->at(i);
+            if (sym) {
+                _optRegisterAlloc[i] = true;
+            } else
+                _optRegisterAlloc[i] = false; // Do not take or save a register which has unknown data
+            /*qlog0._log2(">>> Saving ");
+            qlog0._log2(sym->id.c_str());
+            qlog0._log2(" :: ");
+            qlog0._log2(std::to_string(sym->cacheReg).c_str());
+            qlog0._log2("\n");
+            _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(sym->id), Scope, a, true, true);
+            // Must put their type back.
+            //a->mov(x86::rsi, );
+            a->mov(x86::qword_ptr(x86::rdi), _ASMH__parseVarCacheRef(sym->cacheReg));
+            qlog0._log2(">>> END SAVE ");
+            qlog0._log2(sym->id.c_str());
+            qlog0._log2(" :: ");
+            qlog0._log2(std::to_string(sym->cacheReg).c_str());
+            qlog0._log2("\n");
+            sym->cacheReg = 0;*/
+        }
+        // return;
+    // }
     while (_register_0 < 4) {
         // Get name
         std::string name;
@@ -1319,15 +1352,31 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
         canOccupyReg = true;
         _register = 0;
         sym = nullptr;
-        while (_register < 4) {
+        bool _jmp0 = false;
+        while (_register < 4) { // See which we do not need to delete.
             try {
                 sym = Symbols->at(_register);
             } catch (std::out_of_range &e) {break;}
             if (sym != nullptr && sym->id == name) {
+                qlog0._log2(("TO_BE_HANDLED: {"+name+", ptr="+std::to_string((uint64_t)sym)+"}\n").c_str());
                 qlog0._log2(">>> Can't occupy regSlot: ");
                 qlog0._log2(std::to_string(_register+1).c_str());
+                qlog0._log2(" :: ");
+                qlog0._log2(sym->id.c_str());
+                qlog0._log2(" :: cacheReg=");
+                qlog0._log2(std::to_string(sym->cacheReg).c_str());
                 qlog0._log2("\n");
                 canOccupyReg = false;
+                _optRegisterAlloc[_register] = false;
+                goto _justSum;
+            } else if (sym && sym->id != name) {
+                // Maybe need to save.
+                /// OPTIMIZATION: If register of this obj not used, then make this remaining.
+                _optRegisterAlloc[_register] = true;
+                /*if (sym->cacheReg > 0) {
+                    
+                }*/
+                //std::cout << "AJDSKASJDKASDJKSDJAKDJLWKNDNALSKDASJDQWJIJAOIDCAJOIWJROIAJWDI" << std::endl;
             }
             _register++;
         }
@@ -1335,38 +1384,97 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
         qlog0._log2(name.c_str());
         qlog0._log2("\n");
         if (canOccupyReg) {
-            // Free the register and save their value.
-            if (sym != nullptr && sym->cacheReg > 0) {
-                qlog0._log2(">>> Saving ");
-                qlog0._log2(sym->id.c_str());
-                qlog0._log2("\n");
-                _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(sym->id), Scope, a, true, true);
-                // Must put their type back.
-                //a->mov(x86::rsi, );
-                a->mov(x86::qword_ptr(x86::rdi), _ASMH__parseVarCacheRef(sym->cacheReg+1));
-                qlog0._log2(">>> END SAVE ");
-                qlog0._log2(sym->id.c_str());
-                qlog0._log2("\n");
-                sym->cacheReg = 0;
-            }
             freeRegisters.push_back(_register_0);
-            //_notAllowedHV[_register_0] = true;
+            //Symbols->at(_register_0) = nullptr;
         }
+        _justSum:
         _register_0++;
     }
-    if (freeRegisters.size() == 0)
-        return;
     // Use freed registers.
     uint8_t _c = 0;
     bool _putMaskIfUsed = false;
+    bool _ignoreSubRegisterOptimizations = false;
+    if (freeRegisters.size() == 0)
+        goto _reCheckVars__SAVE;
     while (_c < 4) {
         std::string name;
+        qlog0._log2("Seeking for var loading..\n");
         try {
             auto _item = Scope->HVtoCompiler.at(_c);
             name = _item.first;
         } catch (std::out_of_range &e) {break;}
         lua_localSymbol *slot = acquireVariableFromExtensionsPtr(name, Scope);
+        qlog0._log2(("TO_BE_USED: {"+name+", ptr="+std::to_string((uint64_t)slot)+"}\n").c_str());
+        uint8_t track = freeRegisters.size();
+        uint8_t _st0 = 1;
         if (slot->cacheReg == 0) {
+            uint8_t regId;
+            if (track > 0) {
+                regId = freeRegisters.back();
+            } else {
+                break;
+            }
+            
+            if (_ignoreSubRegisterOptimizations)
+                goto _ignoreOptimizationMethods;
+            // Track optional registers. 
+            if (track == 1 && slot->qID != 3) // Ignore the m_General ones.
+                goto _ignoreOptimizationMethods;
+            if (_optRegisterAlloc.at(regId)) {
+                // if (track > 1) {
+                    // We're using the back register.
+                    _repeat:
+                    try {
+                        regId = freeRegisters.at(freeRegisters.size()-_st0);
+                    } catch (std::out_of_range &e) {
+                        // No available registers, so continue with the first.
+                        regId = freeRegisters.back();
+                        _ignoreSubRegisterOptimizations = true;
+                        goto _ignoreOptimizationMethods;
+                    }
+                    _st0++;
+                    if (_optRegisterAlloc.at(regId)) {
+                        goto _repeat;
+                    }
+                // }
+            }
+            _ignoreOptimizationMethods:
+            freeRegisters.pop_back();
+            if (_optRegisterAlloc.at(regId)) {
+                if (slot->qID == 3) {// Do not overwrite a used value if General Variable
+                    _c++;
+                    continue;
+                }
+                _optRegisterAlloc[regId] = false;
+                // Couldn't resolve, so erase it gracefully.
+                lua_localSymbol *sym = Symbols->at(regId);
+                qlog0._log2(">>> Saving ");
+                qlog0._log2(sym->id.c_str());
+                qlog0._log2(" :: ");
+                qlog0._log2(std::to_string(sym->cacheReg).c_str());
+                qlog0._log2("\n");
+                _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(sym->id), Scope, a, true, true);
+                // Must put their type back.
+                //a->mov(x86::rsi, );
+                a->mov(x86::qword_ptr(x86::rdi), _ASMH__parseVarCacheRef(sym->cacheReg));
+                qlog0._log2(">>> END SAVE ");
+                qlog0._log2(sym->id.c_str());
+                qlog0._log2(" :: ");
+                qlog0._log2(std::to_string(sym->cacheReg).c_str());
+                qlog0._log2("\n");
+                sym->cacheReg = 0;
+            }
+            _st0 = 0;
+            if (slot->qID == 3) { // Let's use a nonwritable
+                qlog0._log2("{non writable rXX reg for m_General variable}\n");
+                lua_localSymbol *q = new lua_localSymbol;
+                //q->slot = slot->slot;
+                memcpy(&q->slot, &slot->slot, 8);
+                q->cacheReg = regId+1;
+                q->qID = 3;
+                q->id = name;
+                _GENERAL_SAVEDVARS[slot->id] = slot;
+            }
             if (!_putMaskIfUsed) {
                 a->mov(x86::r9, (uint64_t)PTR_MASK);
                 _putMaskIfUsed = true;
@@ -1376,15 +1484,41 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
             qlog0._log2("\n");
             _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(slot->id), Scope, a, false, true);
             a->and_(x86::rdi, x86::r9);
-            uint8_t regId = freeRegisters.back();
-            freeRegisters.pop_back();
             a->mov(_ASMH__parseVarCacheRef(regId+1), x86::rdi);
             slot->cacheReg = regId+1;
             qlog0._log2(">>> Ended load ");
             qlog0._log2(slot->id.c_str());
             qlog0._log2("\n");
+            if (slot->qID != 3)
+                Symbols->at(regId) = slot;
         }
         _c++;
+    }
+    /// Maybe save those vars which aren't saved at all.
+    _reCheckVars__SAVE:
+    uint8_t c__ = 0;
+    while (c__ < 4) {
+        if (_optRegisterAlloc.at(c__)) {
+            lua_localSymbol *sym = Symbols->at(c__);
+            qlog0._log2(">>> Saving ");
+            qlog0._log2(sym->id.c_str());
+            qlog0._log2(" :: ");
+            qlog0._log2(std::to_string(sym->cacheReg).c_str());
+            qlog0._log2("\n");
+            _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(returnCompiledString(sym->id), Scope, a, true, true);
+            // Must put their type back.
+            //a->mov(x86::rsi, );
+            a->mov(x86::qword_ptr(x86::rdi), _ASMH__parseVarCacheRef(sym->cacheReg));
+            qlog0._log2(">>> END SAVE ");
+            qlog0._log2(sym->id.c_str());
+            qlog0._log2(" :: ");
+            qlog0._log2(std::to_string(sym->cacheReg).c_str());
+            qlog0._log2("\n");
+            sym->cacheReg = 0;
+        } else {
+            std::cout << "AKSDLASDKASDNANDKNWDNQI:OANODKAHFKJAS" << " = " << std::to_string(c__) << std::endl; 
+        }
+        c__++;
     }
 }
 
@@ -1507,10 +1641,10 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     FuncArgs *f_t_ = nullptr;
     //std::vector<_lua_Keywords_Asm> ASM_INSTR;
     std::unordered_map<uint8_t, lua_localSymbol*> *symbols = new std::unordered_map<uint8_t, lua_localSymbol*>({
-        {0, new lua_localSymbol()},
-        {1, new lua_localSymbol()},
-        {2, new lua_localSymbol()},
-        {3, new lua_localSymbol()},
+        {0, nullptr},
+        {1, nullptr},
+        {2, nullptr},
+        {3, nullptr},
     });
     std::deque<std::pair<Label, Label>> scopeBlocks;
     lua_Scope *ActualScope;
@@ -1523,6 +1657,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     x86::Assembler a(&code);
     code.set_logger(&qlog0);
     initializeRegistersData((void*)&a);
+    _lua_Table__initializeAssembler(&a);
     /*FuncDetail fn_;
     fn_.init(FuncSignature::build<FuncArgs*, FuncArgs*>(), rt.environment());
     FuncFrame frame;
@@ -2041,6 +2176,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         } else {
                             a.inc(_uReg);
                         }
+                        //a.ud2();
                         a.jmp(scopeBlocks.back().first);
                     } else {
                         std::pair<x86::Gp, x86::Gp> register_ = _F_ASM_PUTVARIABLEONTOFUNCTION_RAX(closures.back()._vName, ActualScope, &a, false, false, true);

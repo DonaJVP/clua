@@ -754,17 +754,8 @@ extern void luaErr(lua_ErrSignals sgn, uint32_t file, uint32_t line);
 extern uint32_t luaCurrentFileId;
 extern tStringTable stringTable;
 
-//getAddress()
-Values *luaGetAddress(std::vector<LuaLexFrame> *Keys, _laddr_searchPlaces *places, uint32_t _LINES);
-Values *luaGetAddress(std::vector<LuaLexFrame> *Keys, _laddr_searchPlaces *places, uint32_t _LINES, uint32_t &pos);
-
 //bundleFunction()
 //FunctionPointer luaBundleFunction(std::vector<LuaLexFrame> *Keys, lua_Table *ENV, uint32_t _LINES, uint32_t &pos);
-
-//getExpr()
-Values *luaGetExpr(std::vector<LuaLexFrame> *Keys, _laddr_searchPlaces *P, _Lua_Lex_Keys end, uint32_t &pos, uint32_t _LINES = 0);
-Values *luaGetExpr(std::vector<LuaLexFrame> *Keys, _laddr_searchPlaces *P, _Lua_Lex_Keys end, uint32_t _LINES = 0);
-
 //Tstring manipulation
 extern TString *returnCompiledString(std::string N);
 extern TString returnIndexOfString(uint32_t i);
@@ -789,10 +780,6 @@ extern void *_F_ASM_NOTGUARANTEED_GETPTR(lua_Table *t, TString *k);
 extern void *_F_ASM_NOTGUARANTEED_GETPTR_NOALLOC(lua_Table *t, TString *k, void *NPTR);
 
 extern uint32_t murmur3_32(const void* key, size_t len, uint32_t seed);
-
-extern lua_Expression lua_AcquireNAssembleLuaExpr(std::vector<LuaLexFrame> *Keys, uint32_t *pos, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv);
-extern std::vector<LuaLexFrame> lua_AcquireNAssembleLuaExprBRKT(std::vector<LuaLexFrame> *Keys, uint32_t *pos, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv);
-extern std::vector<LuaLexFrame> lua_AcquireNassembleLuaPath(std::vector<LuaLexFrame> *K, uint32_t *pos, lua_Scope *S, std::vector<std::string> *TR, std::unordered_map<std::string, uint32_t> *hv);
 
 extern std::string luaLexFrameKeyToString(_Lua_Lex_Keys k);
 

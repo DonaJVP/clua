@@ -803,16 +803,18 @@ extern std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexF
 
 
 enum _LUA_XMM_REGISTERS: uint8_t {
-	xmmU,
-	xmm0,
-	xmm1,
-	xmm2,
-	xmm3,
+	xmmU = UINT8_MAX,
+	xmm0 = 0,
+	xmm1 = 1,
+	xmm2 = 2,
+	xmm3 = 3,
 };
 #include <sys/ucontext.h>
 
 struct _REGISTER_;
+struct _XREGISTER_;
 typedef void(*_regCallback)(asmjit::x86::Assembler *a, _REGISTER_ *reg);
+typedef void(*_regCallbackXMM)(asmjit::x86::Assembler *a, _XREGISTER_ *reg);
 
 enum _R_CONTENTS: uint8_t {
 	_R_TRASHDATA = 0,
@@ -840,7 +842,7 @@ struct _XREGISTER_ {
 	_R_CONTENTS cntId = _R_TRASHDATA;
 	int32_t stackPtrBase = 0;
 	void *rData0 = nullptr;
-	_regCallback onModified;
+	_regCallbackXMM onModified;
 };
 typedef std::unordered_map<greg_t, _REGISTER_> RegistersDataGP;
 typedef std::unordered_map<_LUA_XMM_REGISTERS, _XREGISTER_> RegistersDataXMM;
@@ -911,9 +913,12 @@ void _ASM_DEBUGGER_STOP();
 void _lua_Table__initializeAssembler(asmjit::x86::Assembler *ptr);
 LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *scope = nullptr, bool _returnEmptyIfVariables = false);
 void _ASMH__rs_searchInTable(asmjit::x86::Gp tblPTR, std::pair<bool, std::pair<asmjit::x86::Gp, TString*>> key, asmjit::x86::Gp toGp, bool pointer = false);
-void _HELPER__runHooksFor(asmjit::x86::Gp rId, _R_CONTENTS id);
+void _HELPER__runHooksFor(asmjit::Reg rId_, _R_CONTENTS id);
 inline void __ASM_callback_nothing_(asmjit::x86::Assembler *a, _REGISTER_ *reg) {}
+inline void __ASM_callback_nothingX_(asmjit::x86::Assembler *a, _XREGISTER_ *reg) {}
 asmjit::x86::Gp _ASMH__parseVarCacheRef(uint8_t r);
+lua_localSymbol *searchSavedGeneralVars(const std::string id);
+_LUA_XMM_REGISTERS _CPP_getXMMfromASM(asmjit::Reg rId);
 
 
 

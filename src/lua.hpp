@@ -698,7 +698,6 @@ protected:
 	LuaLexFrame resolveCommandString(std::string __cmd);
 private:
 	bool areNumber(uint8_t data);
-	std::vector<uint8_t> EndOfLineOfNumberOrVar(std::vector<uint8_t> *data, uint32_t pos);
 	Lua *m_Lua = nullptr;
 	LuaErrorHandler *m_LuaErrorHandler = nullptr;
 	bool err = false;

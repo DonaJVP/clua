@@ -1,13 +1,13 @@
 
 # Lua core source files.
 set(LUA_CORE_SRC
-	lOvars.cpp
-	lVarControl.cpp
-	lua_interpreter.cpp
-	ltable.cpp
-	lbundlefunc.cpp
-	lapi.cpp
-	l_eval.cpp
+	clapi.cpp
+	cllex.cpp
+	cllex_check.cpp
+	cltable.cpp
+	cleval.cpp
+	cljit.cpp
+	cloptimizer.cpp
 )
 set(LUA_LIB_HEADERS
 	lua.hpp

@@ -307,23 +307,37 @@ LuaLexFrame makeSingleTable(std::vector<LuaLexFrame> *vct, uint32_t *pos) {
                 *pos = *pos + 1; // Ignore _L_TABLE_END instruction.
             }
             case _L_F_ARGS_START: {
+                *pos = *pos + 1;
                 LuaLexFrame _expr = makeSingleExprP(vct, pos);
                 LuaLexFrame _cache = LuaLexFrame(_L_NONE);
-                if (_0_Path && _0_declr && _0_function) {
-                    // Builder consistency are null this time.
-                } else if (_0_Path) {
-                    LuaLexFrame _tableVecLastKeyCOPIED = std::move(tableVec->back());
-                    _cache.addr = _tableVecLastKeyCOPIED.addr;
-                    _cache.key = _L_CALL;
-                    _cache.EXPR = _expr.EXPR;
-                    tableVec->at(tableVec->size()-1) = _cache;
-                    *pos = *pos + 1;
-                    break;
+                if (tableVec->size() == 0) {
+                    // Theres no path.
+                    tableVec->push_back(_expr);
                 } else {
-                    _cache = _expr;
+                    // Theres path or something.
+                    LuaLexFrame _tM = std::move(tableVec->back()); // Copy last character.
+                    if (_tM.key == _L_PATH) {
+                        if (_0_declr) {
+                            _0_declr = false;
+                            LuaLexFrame tG = LuaLexFrame(_L_DECLR_PLUS_DATA);
+                            tableVec->pop_back();
+                            tG.local = false;
+                            tG.addr = _tM.addr;
+                            tG.EXPR = _expr.EXPR;
+                            tableVec->push_back(tG);
+                            //*pos = *pos + 1;
+                            break;
+                        } else {
+                            _cache.addr = _tM.addr;
+                            _cache.key = _L_CALL;
+                            _cache.EXPR = _expr.EXPR;
+                            tableVec->at(tableVec->size()-1) = _cache;
+                        }
+                    } else {
+                        tableVec->push_back(_expr);
+                    }
                 }
-                tableVec->push_back(_cache);
-                *pos = *pos + 1;
+                //*pos = *pos + 1; // Skip _L_F_ARGS_END
                 break;
             }
             case _L_FUNCTION: { // Special.
@@ -339,11 +353,6 @@ LuaLexFrame makeSingleTable(std::vector<LuaLexFrame> *vct, uint32_t *pos) {
             }
         }
         *pos = *pos + 1;
-        if (_0_selfContinue && it->key != _L_DECLR && it->key != _L_FUNCTION) {
-            _0_selfContinue = false;
-            continue;
-        }
-        _0_Path = false;
     }
     return toRet;
 }
@@ -356,7 +365,20 @@ using namespace asmjit;
 x86::Assembler *a = nullptr;
 void _lua_Table__initializeAssembler(x86::Assembler *ptr) { a = ptr; }
 
-void _HELPER__runHooksFor(x86::Gp rId, _R_CONTENTS id) {
+_LUA_XMM_REGISTERS _CPP_getXMMfromASM(Reg rId) {
+    if (!rId.is_vec128())
+        return xmmU;
+    return (_LUA_XMM_REGISTERS)rId.id();
+}
+
+void _HELPER__runHooksFor(Reg rId_, _R_CONTENTS id) {
+    if (rId_.is_vec128()) {
+        lua_RegistersXMM.at(_CPP_getXMMfromASM(rId_)).onModified(a, &lua_RegistersXMM.at(_CPP_getXMMfromASM(rId_)));
+        lua_RegistersXMM.at(_CPP_getXMMfromASM(rId_)).onModified = __ASM_callback_nothingX_;
+        lua_RegistersXMM.at(_CPP_getXMMfromASM(rId_)).cntId = id;
+        return;
+    }
+    x86::Gp rId = x86::Gp::make_r64(rId_.id());
     lua_Registers.at(_CPP_getRegisterFromASM(rId)).onModified(a, &lua_Registers.at(_CPP_getRegisterFromASM(rId)));
     lua_Registers.at(_CPP_getRegisterFromASM(rId)).onModified = __ASM_callback_nothing_;
     lua_Registers.at(_CPP_getRegisterFromASM(rId)).cntId = id;

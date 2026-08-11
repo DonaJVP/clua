@@ -42,11 +42,6 @@ const char lua_ident[] =
 *	Basic functions for VM management
 */
 
-void luaErr(lua_ErrSignals sgn, uint32_t file, uint32_t line) {
-	m_LuaErrorHandler->reportError(sgn, 9898986555, "Lua error at: " + getLine(line, file));
-	m_LuaErrorHandler->setFatal(true);
-}
-
 #include <sstream>
 std::string luaVarInfoToString(lua_VarOnMemInfo data) {
 	std::stringstream a;

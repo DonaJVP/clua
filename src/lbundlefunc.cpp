@@ -2322,16 +2322,24 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         qlog0._log2("CallFunc( common )::Start\n");
                         uint32_t pos = 0;
                         //_F_ASM_SEARCHVALUE(cache.path->getData(), &pos, &a, ActualScope, false);
+                        x86::Gp rbx_ = x86::rbx;
                         x86::Gp reg = CLUA_EvalExprNReturn(&cache.LLF, ActualScope, std::pair<bool, x86::Gp>(true, x86::rbx), false);
+                        if (reg != x86::rbx && reg.id() < 12) {
+                            a.mov(x86::rbx, reg);
+                        } else if (reg.id() > 11) {
+                            rbx_ = reg;
+                        }
                         //a.mov(x86::rbx, reg);
                         //a.ud2(); 
                         _F_ASM_MAKEFUNCTIONARGUMENTS(&cache.p, &a, ActualScope, false, 0);
-                        a.movabs(x86::rax, (uint64_t)0x0000FFFFFFFFFFFFULL);
-                        a.and_(x86::rbx, x86::rax);
+                        if (rbx_.id() < 12) {
+                            a.movabs(x86::rax, (uint64_t)0x0000FFFFFFFFFFFFULL);
+                            a.and_(rbx_, x86::rax);
+                        }
                         //a.shl(x86::r10, 16);
                         //a.sar(x86::r10, 16); 
                         //a.ud2();
-                        a.call(x86::rbx);
+                        a.call(rbx_);
                         qlog0._log2("CallFunc( common )::End\n");
                     }
                 }

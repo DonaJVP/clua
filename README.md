@@ -114,3 +114,6 @@ int main() {
 #### TODO
 - Add 'static' keyword for static table, means no modifications at table elements but their values.
 - Add values types after local nor variable name declaration for better performance at runtime.
+
+#### Licenses
+**This project is covered entirely under GPL-3.0-only license.**

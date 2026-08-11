@@ -315,18 +315,7 @@ void _SCOPE_EMU::sSearchNaddVal(LuaLexFrame *a, LuaType b) {
     _VarHeader *val = SEARCH_VAR(a->addr->getHeaderVarString());
     if (val == nullptr)
         return;
-    std::cout << "_SCOPE_EMU::sSearchNaddVal:<Pointer>  " << (val) << "; " << a->addr->getHeaderVarString() << std::endl;
-    //if (!a->local)
-    //    return;
-    if (val == nullptr) {
-        /*//Create a new slot
-        val = new _VarHeader();
-        val->Addr = a;
-        val->howIsUsed.push_back(b);
-        vars.insert(std::pair<std::string, _VarHeader>(a->getHeaderVarString(), *val));*/
-        //val->_ASSOC_VARS.push_back(a->addr);
-    } else {
-        std::cout << "Added to variable '" << a->addr->getHeaderVarString() << "' value: " << std::to_string(b) << std::endl;
+    if (val != nullptr) {
         val->howIsUsed.push_back(b);
         val->_ASSOC_VARS.push_back(a);
     }
@@ -356,10 +345,7 @@ _VarHeader *_SCOPE_EMU::SEARCH_VAR(std::string a, bool onlyThisScope) {
 LuaType getOverallType(std::vector<LuaType> Types) {
     LuaType sel = LuaUnknown;
     bool _NOT_SEL = false;
-    std::cout << '\n';
-    std::cout << "TypeOverallCountCheck: " << std::to_string(Types.size()) << std::endl;
     for (LuaType &t: Types) {
-        std::cout << "TypeSeen: " << std::to_string(t) << std::endl;
         if (!_NOT_SEL) {
             sel = t;
             _NOT_SEL = true;
@@ -370,7 +356,6 @@ LuaType getOverallType(std::vector<LuaType> Types) {
                 } else if (sel == LuaInteger) {
                     sel = LuaInteger;
                 } else {
-                    std::cout << "TypeFinal: " << std::to_string(LuaUnknown) << std::endl;
                     return LuaUnknown;
                 }
             } else if (t == LuaNumber) {
@@ -379,19 +364,15 @@ LuaType getOverallType(std::vector<LuaType> Types) {
                 } else if (sel == LuaNumber) {
                     sel = LuaNumber;
                 } else {
-                    std::cout << "TypeFinal: " << std::to_string(LuaUnknown) << std::endl;
                     return LuaUnknown;
                 }
             } else {
                 if (sel != t) {
-                    std::cout << "TypeFinal: " << std::to_string(LuaUnknown) << std::endl;
                     return LuaUnknown;
                 }
             }
         }
     }
-    std::cout << "TypeFinal: " << std::to_string(sel) << std::endl;
-    std::cout << '\n';
     return sel;
 }
 
@@ -501,7 +482,6 @@ std::vector<LuaLexFrame> simplifyExpression(std::vector<LuaLexFrame> *keys, _SCO
                             }
                             auto pHolder = _->howIsUsed;
                             LuaType _c0 = getOverallType(pHolder);
-                            std::cout << "Variable::" << act->addr->getHeaderVarString() << " has type: " << std::to_string(_c0) << std::endl;
                             now->sSearchNaddVal(act, _c0);
                             _lastNumberOperand = _c0;
                         } else {
@@ -1160,9 +1140,6 @@ lua_Expression computeExpression(lua_Expression tc, _SCOPE_EMU *scope, std::vect
             }
             _VarHeader _U;
             _U.Addr = vct.at(0).addr;
-            //_U.howIsUsed.push_back(__LEX_KEY_TO_LuaType(AF.addr->getHeader()->subkey, (AF.addr->getHeader()->subkey == _L_INT ? 0 : 1)));
-            //AF.addr->getHeader()->addr = AF.addr;
-            //_U._ASSOC_VARS.push_back(&vct.at(0));
             _loopPhases++;
             if (vct.size() > 1) {
                 if (vct.at(1).key == _L_DECLR) {
@@ -1222,7 +1199,6 @@ void _UPDATE_INSTANCES_000(std::vector<LuaLexFrame> *pProcKeys, _SCOPE_EMU *scp)
     std::unordered_map<std::string, _VarHeader> *contents = &scp->vars;
     for (auto it = contents->begin(); it != contents->end(); it++) {
         LuaType final__ = getOverallType(it->second.howIsUsed);
-        std::cout << "On Update Instances: final version of the var " << it->first << " is " << std::to_string(final__) << std::endl;
         it->second.FinalType = final__;
         
         // As we go uhh.. we should look at every variable which represents that instances.
@@ -1289,8 +1265,6 @@ void _UPDATE_INSTANCES_000(std::vector<LuaLexFrame> *pProcKeys, _SCOPE_EMU *scp)
             }
             pos++;
         }
-        
-        std::cout << "[[END]] Updated Instance: " << it->first << std::endl;
         if (scp->_toCheckAvailable) {
             if (scp->LexHeader != nullptr) {
                 // if nullptr then it are ignored by a flag
@@ -1549,7 +1523,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                             _DECLR.multipleway = true;
                         }
                         _DECLR.EXPR = computeExpression(AF.EXPR, nowScope);
-                        m_LuaErrorHandler->reportWarning(_lua_es_Illegal, 0, "For local: " + _DECLR.addr->getHeaderVarString() +" = "+ pushDump(&_DECLR.EXPR.at(0)));
                         _DECLR.local = true;
                         toFocus->push_back(_DECLR);
                         _1_Path = false;
@@ -1561,7 +1534,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                         _DECLR.addr = _1_cache_0.addr;
                         _DECLR.local = false;
                         _DECLR.EXPR = computeExpression(AF.EXPR, nowScope);
-                        m_LuaErrorHandler->reportWarning(_lua_es_Illegal, 0, "For DECLR: " + _1_cache_0.addr->getHeaderVarString() +" = "+ pushDump(&_DECLR.EXPR.at(0)));
                         
                         // SHOULD ROUND DATA.
                         
@@ -1915,8 +1887,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     for (_SCOPE_EMU *scope: startScope->succesors) {
         _UPDATE_INSTANCES_001(&final_, scope);
     }
-//     
-    //final_.push_back(LuaLexFrame(_L_FLAG_CONTINUE_FRAME2));
     return final_;
 
 }

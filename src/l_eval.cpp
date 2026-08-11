@@ -1242,6 +1242,10 @@ void _SaveRDX__000(x86::Assembler *b, _REGISTER_ *reg) {
 void _SaveRET__000(x86::Assembler *b, _REGISTER_ *reg) {
     if (reg->cntId != _R_CLUATYPE_TAGGED)
         return;
+    if (reg->rID == 0) {
+        m_LuaErrorHandler->reportWarning(_lua_es_FutureCrashAtRuntime, 0, "reg->rID detected as null!");
+        return;
+    }
     a->mov(x86::qword_ptr(x86::rbp, -72), _CPP__getGeneralPurposeRegister(reg->rID));
     _savedRET_0 = true;
 }
@@ -1266,11 +1270,11 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
     x86::Gp q0 = x86::noReg;
     _Lua_Lex_Keys _OPMODE = _L_NONE;
     bool _notOpCode = false;
-    bool _emitted_xmmOCX = false;
     uint8_t tEmittedCode = 0;
     bool _presearched_query = false;
     bool _use_ret_reg = false;
     bool _quotient_r = false;
+    bool _hasTypePath = false;
     LuaLexFrame *doomPath0 = nullptr;
     uint8_t lType0 = 0;
     while (true) {
@@ -1280,12 +1284,40 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
             queue.clear();
             if (_usePointer)
                 *middleCheck.first = pos;
-            return x86::Gp::make_r64(ret.id());
+            if (_toRet.id() != ret.id() || ret.is_vec128()) {
+                // Unequal ids nor vector.
+                if (_toRet.is_vec128()) {
+                    a->movq(_toRet, x86::Vec::make_v128(ret.id()));
+                } else {
+                    if (ret.id() < 12 || getPointerInsteadofRawD) {
+                        a->mov(_toRet, x86::Gp::make_r64(ret.id()));
+                    } else {
+                        return x86::Gp::make_r64(ret.id());
+                    }
+                }
+            }
+            return _toRet;
         }
         if (stopAt == pointer->key) {
             if (_usePointer)
                 *middleCheck.first = pos;
-            return x86::Gp::make_r64(ret.id());
+            if (_toRet.id() != ret.id() || ret.is_vec128()) {
+                // Unequal ids nor vector.
+                if (_toRet.is_vec128()) {
+                    a->movq(_toRet, x86::Vec::make_v128(ret.id()));
+                } else {
+                    if (ret.id() < 12 || getPointerInsteadofRawD) {
+                        a->mov(_toRet, x86::Gp::make_r64(ret.id()));
+                    } else {
+                        return x86::Gp::make_r64(ret.id());
+                    }
+                }
+            }
+            return _toRet;
+        }
+        if (pointer->key == _L_OVERALLTYPECHECKER) {
+            pos++;
+            continue;
         }
         std::pair<bool, uint8_t> eao = _CPP__emittedAnyOpcode(pointer->key);
         if (eao.first) {
@@ -1320,6 +1352,10 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                 }
                 _CPP__setcntId(ret, _R_CLUATYPE_TAGGED);
                 break;
+            }
+            case _L_NONE: {
+                a->xor_(x86::Gp::make_r64(ret.id()), x86::Gp::make_r64(ret.id()));
+                return x86::Gp::make_r64(ret.id());
             }
             case _L_NIL: {
                 a->xor_(x86::Gp::make_r64(ret.id()), x86::Gp::make_r64(ret.id()));
@@ -1390,6 +1426,8 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                     }
                     // Restored, now, let's proceed.
                     ret = _ASM__runOpCode(_OPMODE, ret, x86::rax, (ret.is_vec128() ? false : (ret.id() > 11 ? true : false)), true);
+                } else {
+                    ret = x86::rax;
                 }
                 _CPP__setcntId(ret, _R_CLUATYPE_TAGGED);
                 break;
@@ -1404,14 +1442,18 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
             case _L_PATH: {
                 _HELPER__runHooksFor(ret, _R_TRASHDATA);
                 x86::Gp path = _ASM__getPathToSelGp(pointer->addr->getData(), x86::r11, scope, (!_CPP__existsMoreOnWay(k, pos) && getPointerInsteadofRawD), true); //x86::Gp
-                if (_savedRET_0) {
+                if (pointer->LuaTYPE != 0x2 && _OPMODE == _L_NONE) {
+                    _hasTypePath = true;
+                    lType0 = (uint8_t)pointer->LuaTYPE;
+                }
+                if (_savedRET_0 && _OPMODE != _L_NONE) { // No need to restore unknown data if no next key.
                     if (ret.is_vec128())
                         a->movq(x86::Vec::make_v128(ret.id()), x86::qword_ptr(x86::rbp, -72));
                     else
                         a->mov(x86::Gp::make_r64(ret.id()), x86::qword_ptr(x86::rbp, -72));
                 }
                 if (_OPMODE != _L_NONE) {
-                    ret = _ASM__runOpCode(_OPMODE, ret, path, (ret.is_vec128() ? false : (ret.id() > 11 ? true : false)), (path.id() > 11 ? false : true));
+                    ret = _ASM__runOpCode(_OPMODE, ret, path, (ret.is_vec128() ? false : (ret.id() > 11 ? false : (!_hasTypePath))), (path.id() > 11 ? false : true));
                 } else {
                     ret = path;
                 }
@@ -1493,7 +1535,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                         ret = x86::xmm0;
                     } else {
                         a->movq(x86::xmm1, x86::r9);
-                        ret = _ASM__runOpCode(_OPMODE, ret, x86::xmm1, true, false);
+                        ret = _ASM__runOpCode(_OPMODE, ret, x86::xmm1, (ret.id() > 11 ? false : true), false);
                     }
                     
                     _CPP__setcntId(ret, _R_CLUATYPE_TAGGED);
@@ -1503,7 +1545,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                         a->movabs(x86::Gp::make_r64(ret.id()), val);
                     } else {
                         a->mov(x86::r11, (uint64_t)std::stoi(std::string(pointer->_data.begin(), pointer->_data.end())));
-                        ret = _ASM__runOpCode(_OPMODE, ret, x86::r11, true, false);
+                        ret = _ASM__runOpCode(_OPMODE, ret, x86::r11, (ret.id() > 11 ? false : true), false);
                     }
                     _CPP__setcntId(ret, _R_CLUATYPE_TAGGED);
                 }

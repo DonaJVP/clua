@@ -262,7 +262,7 @@ std::vector<LuaLexFrame> LuaLex::ParserSecondStage(std::vector<std::string> data
 	bool _elseif = false;
 	bool _end = false;
 	bool _LAST_Str = false;
-	bool _declr_p0 = false;
+	uint32_t _declr_p0 = 0;
 	bool _for = false;
 	uint8_t _key = false;
 	LuaLexFrame CACHE_LEX;
@@ -707,7 +707,7 @@ _EQ_TERM:
 			blocks.push_back(_K);
 			_local_decl = false;
 			if (!_for) {
-				_declr_p0 = true;
+				_declr_p0++;
 				LuaLexFrame _L(_L_F_ARGS_START);
 				blocks.push_back(_L);
 			}
@@ -826,7 +826,7 @@ _GARGABE:
 			if (_declr_p0) {
 				LuaLexFrame _L(_L_F_ARGS_END);
 				blocks.push_back(_L);
-				_declr_p0 = false;
+				_declr_p0--;
 			}
 			LuaLexFrame _K(_L_SEPARATOR);
 			blocks.push_back(_K);
@@ -838,16 +838,21 @@ _GARGABE:
 			goto _FLUSH;
 		}
 		if (key == "}") {
+			if (_declr_p0) {
+				LuaLexFrame _L(_L_F_ARGS_END);
+				blocks.push_back(_L);
+				_declr_p0--;
+			}
 			LuaLexFrame _K(_L_TABLE_END);
 			blocks.push_back(_K);
 			goto _FLUSH;
 		}
 		if (key == ",") {
-			/*if (_declr_p0) {
+			if (_declr_p0) {
 				LuaLexFrame _L(_L_F_ARGS_END);
 				blocks.push_back(_L);
-				_declr_p0 = false;
-			}*/
+				_declr_p0--;
+			}
 			LuaLexFrame _K(_L_SEPARATOR);
 			_K.ATTRIB = 1;
 			blocks.push_back(_K);

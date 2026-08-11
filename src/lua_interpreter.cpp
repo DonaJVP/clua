@@ -47,6 +47,46 @@ static std::pair<bool, bool> _chars_is_numb(std::string numb) {
 	return {_done, _dot};
 }
 
+std::vector<LuaLexFrame> LuaLex::ParserThirdStage(std::vector<LuaLexFrame> keys) {
+	// Transform some strings to TSTRING
+	// Don't verify shit.
+	std::vector<LuaLexFrame> FRAMES_NEW;
+	std::unordered_map<std::string, LuaType*> varMap;
+	uint64_t i = 0;
+	while (true) {
+		LuaLexFrame FRM;
+		try {
+			FRM = keys.at(i);
+		} catch (std::out_of_range &e) {
+			// Stop.
+			return FRAMES_NEW;
+		}
+		switch (FRM.key) {
+			case _L_VARNAME: {
+				// Transform into TSTRING
+				std::string data = std::string(FRM._data.begin(), FRM._data.end());
+				FRM.a = returnCompiledString(data); // Already compiled.
+				FRM.keystring = data;
+				FRAMES_NEW.push_back(FRM);
+				break;
+			}
+			case _L_STRING: {
+				// Transform into TSTRING
+				std::string data = std::string(FRM._data.begin(), FRM._data.end());
+				FRM.a = returnCompiledString(data); // Already compiled.
+				FRM.keystring = data;
+				FRAMES_NEW.push_back(FRM);
+				break;
+			}
+			default: {
+				FRAMES_NEW.push_back(FRM);
+				break;
+			}
+		}
+		i++;
+	}
+}
+
 std::vector<std::string> LuaLex::ParserFirstStage(std::vector<uint8_t> data) {
 	// First stage, just separate by <operators: = ! ( ) { } [ ] / * + - < > " ' | %>
 	std::vector<std::string> blocks;

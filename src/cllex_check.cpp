@@ -407,7 +407,6 @@ std::vector<LuaLexFrame> simplifyExpression(std::vector<LuaLexFrame> *keys, _SCO
     int8_t quotient = 0;
     bool _VARNAME = false;
     _Lua_Lex_Keys MATHOP = _L_NONE;
-    m_LuaErrorHandler->reportWarning(_lua_es_Illegal, 0, pushDump(keys));
     std::vector<LuaType> OverallType;
     LuaType _lastNumberOperand = LuaUnknown;
     while (true) {
@@ -1366,8 +1365,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                 break;
             }
             case _L_VARNAME: {
-                if (_0_local)
-                    m_LuaErrorHandler->reportWarning(_lua_es_Illegal, 0, "VariableDeclared: " + AF.keystring);
                 NOW.push_back(makeSinglePath(Keys, &pos));
                 (&NOW.at(NOW.size()-1))->local = _0_local;
                 _0_local = false;

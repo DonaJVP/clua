@@ -147,14 +147,6 @@ void removeStringId(uint32_t I) { // For cache datas
 }
 //END TSTRING
 
-//BEGIN TABLE_MANIPULATOR
-// Build table from LuaLexFrame*, should start from _L_TABLE_START, each index or object inside the table should be online builded.
-lua_Table *buildTableFromKeys(std::vector<LuaLexFrame> *Keys, uint32_t &pos) {
-	lua_Table *TBL = new lua_Table();
-	return TBL;
-}
-//END TABLE_MANIPULATOR
-
 bool LuaLex::areNumber(uint8_t data) {
 	switch (data) {
 		case (0): {
@@ -189,27 +181,6 @@ bool LuaLex::areNumber(uint8_t data) {
 		}
 	}
 	return false;
-}
-
-std::vector<uint8_t> LuaLex::EndOfLineOfNumberOrVar(std::vector<uint8_t> *data, uint32_t pos) {
-	// Start checking
-	bool cancel_ = false;
-	uint32_t pos_ = pos;
-	for (std::vector<uint8_t>::iterator it = data->begin()+pos; it != data->end(); it++) {
-		//Skip the spaces, otherwise, if the number are already done, then cancel
-		if ((*it == ' ') && !cancel_)
-			goto EndPoint;
-		if ((*it == '0') || (*it == '1') || (*it == '2') || (*it == '3') || (*it == '4') || (*it == '5') || (*it == '6') || (*it == '7') || (*it == '8') || (*it == '9')) {
-			// This could be an decimal or hexadecimal value
-			// So, let's see if theres an 'x'
-			if (data->at(pos_+1) == 'x') {
-				//Hexadecimal, idk how to make this
-
-			}
-		}
-		EndPoint:
-		pos_++;
-	}
 }
 
 #define cstr __cache2.clear();
@@ -387,67 +358,6 @@ void LuaErrorHandler::reportWarning(const lua_ErrSignals signal, const size_t fu
 	}
 }
 
-std::string toHex(uint64_t bytes) {
-	std::stringstream ss;
-	ss << std::hex;
-	ss << bytes;
-	ss << std::dec;
-	return ss.str();
-}
-
-//BEGIN LUAFUNC
-static Values PRINT(Values RDI, Values RSI, FuncArgs *ARGS) { // Classic start.
-	// __asm__ ("ud2");
-	TString *ptr = (TString*)lua_getPtr(RDI);
-	std::cout << std::string(ptr->data, ptr->len) << '\n';
-	return 0;
-}
-int64_t clua_cCalcTimeMS() {
-	struct timespec now;
-	// Use TIME_UTC to measure time since the Epoch
-	timespec_get(&now, TIME_UTC);
-	uint64_t v = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
-	// Convert seconds to milliseconds and add milliseconds from nanoseconds
-	return v;//((int64_t)now.tv_sec) * 1000 + ((int64_t)now.tv_nsec) / 1000000;
-}
-static uint64_t start = 0;
-static bool started = false;
-static void calcTime() {
-	if (!started) {
-		start = clua_cCalcTimeMS();
-		started = !started;
-	} else  {
-		struct timespec now;
-		timespec_get(&now, TIME_UTC);
-		uint64_t v = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
-		std::cout << "Records are: " << std::to_string(v - start) << std::endl;
-		started = false;
-	}
-}
-static FuncArgs *RT(FuncArgs *_) {
-	FuncArgs *a = new FuncArgs[2];
-	a[0] = (uint64_t)0x1;
-	a[1] = (uint64_t)lua_makeVar(returnCompiledString("PUTO"), LuaString);
-	return a;
-}
-static Values TOSTRING(Values RDI, Values RSI, FuncArgs *ARGS) {
-	
-	std::stringstream a;
-	a << std::hex;
-	a << (uint64_t)RDI;
-	//__asm__ ( "ud2" );
-	return lua_makeVar(returnCompiledString(a.str()), LuaString);
-}
-static FuncArgs *EXIT(FuncArgs *_) {
-	exit(0);
-	free(_);
-	return nullptr;
-}
-static Values ud2(Values RDI, Values RSI, FuncArgs *ARGS) {
-	__asm__ ("ud2");
-}
-//END LUAFUNC
-
 #ifndef DO_MAIN_FUNC
 
 #include <random>
@@ -479,28 +389,6 @@ int main(int argc, char* argv[]) {
 	memset((void*)m_General->nodes, 0, 0xFFFF*sizeof(Node));
 	m_General->hmask = 0xFFFF;
 	m_LuaErrorHandler = leh;
-	TString *_PRINTFUNC = returnCompiledString("print");
-	TString *_TOSTRINGFUNC = returnCompiledString("lel");
-	TString *_TOSTRING = returnCompiledString("tostring");
-	Values print;
-	print = lua_makeVar(((void*)PRINT), LuaFunction);
-	Values lel;
-	lel = lua_makeVar(((void*)RT), LuaFunction);
-	//std::cout << std::hex << ((uint64_t)PRINT) << std::dec<< std::endl;
-	//std::cout << std::hex << print << std::dec << std::endl;
-	//std::cout << (lua_getVarType(print)) << std::endl;
-	//Values tostring;
-	//tostring.type = LuaFunction;
-	//tostring.func = (FunctionPointer)PRINT;
-	//TBL->strMap[_TOSTRINGFUNC] = tostring;
-	_F_ASM_NOTGUARANTEED_SETVALUE(m_General, _PRINTFUNC, print);
-	_F_ASM_NOTGUARANTEED_SETVALUE(m_General, _TOSTRINGFUNC, lel);
-	_F_ASM_NOTGUARANTEED_SETVALUE(m_General, returnCompiledString("tostring"), lua_makeVar(((void*)TOSTRING), LuaFunction));
-	_F_ASM_NOTGUARANTEED_SETVALUE(m_General, returnCompiledString("test"), lua_makeVar((void*)returnCompiledString("nigger "), LuaString));
-	_F_ASM_NOTGUARANTEED_SETVALUE(m_General, returnCompiledString("exit"), lua_makeVar(((void*)EXIT), LuaFunction));
-	_F_ASM_NOTGUARANTEED_SETVALUE(m_General, returnCompiledString("CC"), lua_makeVar(((void*)calcTime), LuaFunction));
-	_F_ASM_NOTGUARANTEED_SETVALUE(m_General, returnCompiledString("ud2"), lua_makeVar(((void*)ud2), LuaFunction));
-	//_F_ASM_NOTGUARANTEED_SETVALUE(m_General, returnCompiledString("var0"), lua_makeVar(returnCompiledString("pingas"), LuaString));
 	if (argc > 1) {
 		// Proc files.
 		std::ifstream inputFile(argv[1]);

@@ -83,6 +83,22 @@ LuaLexFrame makeSingleExprP(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
             case _L_F_ARGS_START: {
                 *pos = *pos + 1;
                 LuaLexFrame _F = makeSingleExprP(keys, pos);
+                if (contents.at(level).size() > 1) {
+                    LuaLexFrame _C = std::move(contents.at(level).at(*pos));
+                    if (_C.key == _L_PATH) {
+                        // Erase that key and then push new.
+                        contents.at(level).pop_back();
+                        LuaLexFrame _CALL(_L_CALL);
+                        _CALL.addr = _C.addr;
+                        _CALL.EXPR = _F.EXPR;
+                        contents.at(level).push_back(_CALL);
+                        break;
+                    } else {
+                        goto _CC_;
+                    }
+                    break;
+                }
+                _CC_:
                 contents.at(level).push_back(_F);
                 break;
             }
@@ -1394,26 +1410,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                 }
                 NOW.push_back(_SDATA);
                 _0_local = false;
-                std::cout << "############# ARGS POSITION: " << pos << std::endl;
-                std::cout << "#######= -" << std::endl;
-                for (int aa = 0; aa < 16; aa++) {
-                    try {
-                        std::cout << "ARG KEYS: <" << aa << "> " << Keys->at(pos-aa).key << (Keys->at(pos-aa).key == _L_STRING ? "["+(std::string(Keys->at(pos-aa)._data.begin(), Keys->at(pos-aa)._data.end()))+"]" : "") << "+" << (Keys->at(pos-aa).key == _L_PATH ? "["+(Keys->at(pos-aa).addr->getHeaderVarString())+"]" : "") << " - " << pos-aa << std::endl;
-                    } catch (std::out_of_range &e) {
-                        
-                    }
-                }
-                std::cout << "#######= -" << std::endl;
-                std::cout << "#######= +" << std::endl;
-                for (int aa = 0; aa < 16; aa++) {
-                    try {
-                        std::cout << "ARG KEYS: <" << aa << "> " << Keys->at(pos+aa).key << (Keys->at(pos+aa).key == _L_STRING ? "["+(std::string(Keys->at(pos+aa)._data.begin(), Keys->at(pos+aa)._data.end()))+"]" : "") << "+" << (Keys->at(pos+aa).key == _L_VARNAME ? "["+(std::string(Keys->at(pos+aa)._data.begin(), Keys->at(pos+aa)._data.end()))+"]" : "") << " - " << pos+aa << std::endl;
-                    } catch (std::out_of_range &e) {
-                        
-                    }
-                }
-                std::cout << "#######= +" << std::endl;
-                std::cout << "############# ARGS POSITION: " << pos << std::endl;
                 break;
             }
             case _L_ON_TO_GO: {
@@ -1443,16 +1439,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     }
     
     pos = 0;
-    m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, "- - - - - -");
-    m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, std::to_string(NOW.size()).c_str());
-    for (LuaLexFrame &C: NOW) {
-        _s.append("$[");
-        _s.append(std::to_string(C.key));
-        _s.append("] ");
-    }
-    m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, _s.c_str());
-    m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, "- - - - - -");
-    
     while (true) {
         try {
             AF = NOW.at(pos);
@@ -1658,15 +1644,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     pos = 0;
     bool _2_Func = false;
     std::vector<LuaLexFrame> final_;
-    m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, "# # # # # #");
-    m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, std::to_string(preRes.size()).c_str());
-    std::string _c;
-    for (LuaLexFrame &C: preRes) {
-        _c.append("$[");
-        _c.append(std::to_string(C.key));
-        _c.append("] ");
-    }
-    m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, _c.c_str());
     //nowScope
     uint32_t *qPos = &pos;
     std::vector<LuaLexFrame> *qVector = &preRes;

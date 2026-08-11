@@ -7,7 +7,6 @@ set(LUA_CORE_SRC
 	ltable.cpp
 	lbundlefunc.cpp
 	lapi.cpp
-	lua_assembly.cpp
 	l_eval.cpp
 )
 set(LUA_LIB_HEADERS
@@ -28,6 +27,8 @@ endif()
 if(BUILD_CLUA_EXE)
 set(LUA_TOTAL ${LUA_CORE_SRC} ${LUA_LIB_HEADERS})
 add_executable(lua_interpreter ${LUA_TOTAL} ${ASMJIT_SRC})
+#target_compile_options(lua_interpreter PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+#target_link_options(lua_interpreter PRIVATE -fsanitize=address)
 target_link_libraries(lua_interpreter PRIVATE asmjit)
 endif()
 

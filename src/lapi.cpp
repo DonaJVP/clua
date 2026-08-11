@@ -108,7 +108,6 @@ TString *returnCompiledString(std::string N) {
 	
 	OBJ = new TString();
 	OBJ->IDX = murmur3_32(N.data(), N.size(), luaSeed);
-	std::cout << "Generated IDX for " << N << " is " << OBJ->IDX << std::endl;
 	OBJ->data = new char[N.size()+1];
 	memcpy(OBJ->data, N.data(), N.size());
 	OBJ->len = N.size();
@@ -155,150 +154,6 @@ lua_Table *buildTableFromKeys(std::vector<LuaLexFrame> *Keys, uint32_t &pos) {
 	return TBL;
 }
 //END TABLE_MANIPULATOR
-
-/*
-*	Functions Management
-* um, might there must be a raw string with a fixed size which should allow store the function name
-*/
-
-// Welp. I thinked this would get even bigger than normal lua, but it ins't.
-// That's sad.
-/*
-	THIS LUA COPY WILL BE CALLED cLua as it works like a compiler. (I just made this for my luanti game)
-	The syntax will be the common, just with few advantages as multithread support
-	mutex will be available too.
-	
-	This don't work with stack base, this works with tree-walk engine based, so, enjoy using lua_Table* as lua_Stack*
-*/
-
-// Table/State manipulation
-
-// LuaTableBase //
-/*
-LuaTableBase::LuaTableBase(Lua *obj) {
-	m_LuaErrorHandler = obj->m_LuaErrorHandler;
-	m_Lua = obj;
-}
-
-// Returns a index-INT value [Copy]
-Values LuaTableBase::getValueIDX(uint32_t val) {
-	// val are a address
-	// This returns a copy.
-	return *_Base2.at(val);
-}
-
-// Returns a index-INT value
-Values *LuaTableBase::getRawAddrValueIDX(uint32_t val) {
-	if (_Base2.size() <= val) {
-		return _Base2[val];
-	}
-	return nullptr;
-}
-
-
-// Returns a index-defined value
-Values *LuaTableBase::getValueAddr(size_t val) {
-	Values* data = new Values();
-	data->TYPO = LuaNil;
-	try {
-		data = _Base.at(val);
-	} catch (std::out_of_range &e) {
-		// Oops!
-		std::string err_info = "";
-		try {
-			lua_VarOnMemInfo addr_inf = *AddrToInfo.at(val);
-			err_info = luaVarInfoToString(addr_inf);
-		} catch (std::out_of_range &e) {
-			err_info = "<Unable to get info> [Var: " + std::to_string(val) + "]";
-			// Ignore. It is sad to find a unknown value somewhere
-		}
-		m_LuaErrorHandler->reportWarning(_lua_es_UnknownDataIdx, 0, std::string("Value are: " + err_info));
-		// Save the value to an table (Link)
-		_Base[val] = data;
-		return data;
-	}
-	return data;
-}
-// Returns a index-defined value
-Values *LuaTableBase::getValueAddrIgnWarn(size_t val) {
-	Values* data = new Values();
-	data->TYPO = LuaNil;
-	try {
-		data = _Base.at(val);
-	} catch (std::out_of_range &e) {
-		return data;
-	}
-	return data;
-}
-
-// It's the true, its the true, it's the trie
-// kinda love.........
-
-//For direct asm
-void setValueHashed(LuaTableBase *base, const size_t hash, FuncArgs *Val) {
-	Values *var = new Values();
-	var->TYPO = Val->data[0].TYPO;
-	var->val0 = Val->data[0].val0;
-	var->val1 = Val->data[0].val1;
-	var->val2 = Val->data[0].val2;
-	var->val3 = Val->data[0].val3;
-	var->val4 = Val->data[0].val4;
-	var->val5 = Val->data[0].val5;
-	base->setValue(lua_AddrSpec(_last_Hashed, hash), var);
-}
-void setValueInteger(LuaTableBase *base, const size_t int_, FuncArgs *Val) {
-	// New var
-	Values *var = new Values();
-	var->TYPO = Val->data[0].TYPO;
-	var->val0 = Val->data[0].val0;
-	var->val1 = Val->data[0].val1;
-	var->val2 = Val->data[0].val2;
-	var->val3 = Val->data[0].val3;
-	var->val4 = Val->data[0].val4;
-	var->val5 = Val->data[0].val5;
-	base->setValue(lua_AddrSpec(_last_Integer, int_), var);
-}
-
-void LuaTableBase::setValue(lua_AddrSpec pos, Values *val) {
-	if (pos.Type == _last_Hashed) { // It might look like this on lua: __n1["duh"] = nil; && __n1.duh = nil;
-		// TO OBJ: _Base
-		_Base.insert(std::pair<size_t, Values*>(pos.Addr, val));
-		if (!pos.Info._name.empty()) {
-			// Debug
-			lua_VarOnMemInfo *vomi = new lua_VarOnMemInfo(pos.Info._name, pos.Addr, val->TYPO);
-			linkAddrToInfo(pos.Addr, vomi);
-		}
-	} else if (pos.Type == _last_Integer) {
-		_Base2[pos.Addr2] = val;
-		if (!pos.Info._name.empty()) {
-			// Debug
-			lua_VarOnMemInfo *vomi = new lua_VarOnMemInfo(pos.Info._name, pos.Addr, val->TYPO);
-			linkAddrToInfo(pos.Addr, vomi);
-		}
-	}
-}
-
-// Table clearing
-
-void LuaTableBase::clearTable() {
-	uint32_t idx = 0;
-	for (Values *OBJ : _Base2) {
-		// Clear the vector
-		m_Lua->setNil(this, lua_IndexMethod(_lua_idxm_integer, -1, idx));
-		idx++;
-	}
-	// Clear the raw table
-	for (auto it = _Base.begin(); it != _Base.end(); it++) {
-		m_Lua->setNil(this, lua_IndexMethod(_lua_idxm_string, it->first, 0));
-	}
-}
-
-// Special for debug
-
-void LuaTableBase::linkAddrToInfo(size_t addr, lua_VarOnMemInfo *L_vomi) {
-	AddrToInfo.insert(std::pair<size_t, lua_VarOnMemInfo*>(addr, L_vomi));
-}
-*/
 
 bool LuaLex::areNumber(uint8_t data) {
 	switch (data) {
@@ -542,6 +397,7 @@ std::string toHex(uint64_t bytes) {
 
 //BEGIN LUAFUNC
 static Values PRINT(Values RDI, Values RSI, FuncArgs *ARGS) { // Classic start.
+	// __asm__ ("ud2");
 	TString *ptr = (TString*)lua_getPtr(RDI);
 	std::cout << std::string(ptr->data, ptr->len) << '\n';
 	return 0;
@@ -575,6 +431,7 @@ static FuncArgs *RT(FuncArgs *_) {
 	return a;
 }
 static Values TOSTRING(Values RDI, Values RSI, FuncArgs *ARGS) {
+	
 	std::stringstream a;
 	a << std::hex;
 	a << (uint64_t)RDI;

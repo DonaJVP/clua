@@ -1,5 +1,4 @@
 
-# Lua core source files.
 set(CLUA_CORE_SRC
 	clapi.cpp
 	cllex.cpp
@@ -13,7 +12,7 @@ set(CLUA_LIB_HEADERS
 	lua.hpp
 )
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${ASMJIT_INCLUDE_DIRS})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${ASMJIT_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/libs/)
 
 if(BUILD_CLUA_LIB)
 add_library(clua STATIC ${CLUA_CORE_SRC} ${ASMJIT_SRC})
@@ -23,7 +22,7 @@ set(CLUA_LIBS clua)
 endif()
 
 if(BUILD_CLUA_EXE)
-set(CLUA_TOTAL ${CLUA_CORE_SRC} ${CLUA_LIB_HEADERS})
+set(CLUA_TOTAL ${CLUA_CORE_SRC} ${CLUA_LIB_HEADERS} ${CLUA_CORE_LIBS})
 add_executable(clua ${CLUA_TOTAL} ${ASMJIT_SRC})
 #target_compile_options(clua PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 #target_link_options(clua PRIVATE -fsanitize=address)

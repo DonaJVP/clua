@@ -1079,7 +1079,7 @@ std::pair<bool, uint8_t> _CPP__emittedAnyOpcode(_Lua_Lex_Keys c) {
 }
 
 void _ASM_crashINSTR(lua_ErrSignals signal) {
-    a->ud2();
+    m_LuaErrorHandler->reportError(signal, 0, "Internal error.");
 }
 
 //x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD = false);
@@ -1140,12 +1140,18 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                             a->mov(act, 0);
                             a->bind(_f1);
                         } else {
+                            if (act.id() < 12) {
+                                a->mov(act, x86::qword_ptr(act));
+                            }
                             Label _f = a->new_label();
                             Label _f1 = a->new_label();
                             _ASM__cmpVarType(act, LuaTable);
                             a->jne(_f);
                             //Search for this value.
-                            a->mov(act, x86::qword_ptr(act));
+                            if (act.id() < 12) {
+                                a->movabs(x86::r11, 0x0000FFFFFFFFFFFFULL);
+                                a->and_(act, x86::r11);
+                            }
                             _ASMH__rs_searchInTable(act, std::pair<bool, std::pair<x86::Gp, TString*>>(false, std::pair<x86::Gp, TString*>(x86::noReg, (TString*)actual->a)), act);
                             a->jmp(_f1);
                             a->bind(_f);

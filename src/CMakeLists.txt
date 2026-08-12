@@ -1,6 +1,6 @@
 
 # Lua core source files.
-set(LUA_CORE_SRC
+set(CLUA_CORE_SRC
 	clapi.cpp
 	cllex.cpp
 	cllex_check.cpp
@@ -9,27 +9,25 @@ set(LUA_CORE_SRC
 	cljit.cpp
 	cloptimizer.cpp
 )
-set(LUA_LIB_HEADERS
+set(CLUA_LIB_HEADERS
 	lua.hpp
 )
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${ASMJIT_INCLUDE_DIRS})
 
-
-
 if(BUILD_CLUA_LIB)
-add_library(lua STATIC ${LUA_CORE_SRC} ${ASMJIT_SRC})
-target_link_libraries(lua ${LIBS} )
-set(LUA_STATIC_LIB lua)
-set(LUA_LIBS lua)
+add_library(clua STATIC ${CLUA_CORE_SRC} ${ASMJIT_SRC})
+target_link_libraries(clua ${LIBS} )
+set(CLUA_STATIC_LIB clua)
+set(CLUA_LIBS clua)
 endif()
 
 if(BUILD_CLUA_EXE)
-set(LUA_TOTAL ${LUA_CORE_SRC} ${LUA_LIB_HEADERS})
-add_executable(lua_interpreter ${LUA_TOTAL} ${ASMJIT_SRC})
-#target_compile_options(lua_interpreter PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-#target_link_options(lua_interpreter PRIVATE -fsanitize=address)
-target_link_libraries(lua_interpreter PRIVATE asmjit)
+set(CLUA_TOTAL ${CLUA_CORE_SRC} ${CLUA_LIB_HEADERS})
+add_executable(clua ${CLUA_TOTAL} ${ASMJIT_SRC})
+#target_compile_options(clua PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+#target_link_options(clua PRIVATE -fsanitize=address)
+target_link_libraries(clua PRIVATE asmjit)
 endif()
 
 

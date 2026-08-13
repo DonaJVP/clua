@@ -687,7 +687,7 @@ std::vector<LuaLexFrame> LuaLex::ParserSecondStage(std::vector<std::string> data
 		}
 
 		// S T R I N G
-		if (key == "string") {
+		if (key == "stringT") {
 			if (_bool_decl || _int_decl || _str_decl) {
 				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad value formatting for 'string'" + std::string(reinterpret_cast<const char*>(words_count)) + "> " + show_code_(words_count)));
 				m_LuaErrorHandler->setFatal(true);
@@ -711,7 +711,11 @@ std::vector<LuaLexFrame> LuaLex::ParserSecondStage(std::vector<std::string> data
 		//END VAR TYPES
 
 		//
-
+		if (key == "nil") {
+			LuaLexFrame _K(_L_NIL);
+			blocks.push_back(_K);
+			goto _FLUSH;
+		}
 		
 _EQ_TERM:
 		//std::cout << key.size() << " = " << key << std::endl;

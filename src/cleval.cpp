@@ -553,7 +553,6 @@ void _ASMH__rs_searchInTable(x86::Gp tblPTR, std::pair<bool, std::pair<x86::Gp, 
     // FOUND
     // =========================
     a->bind(_f);
-    std::cout << "chr: " << toGp.id() << std::endl;
     if (!pointer) {
         a->mov(toGp, x86::qword_ptr(x86::rdx, offsetof(Node, val)));
     } else {
@@ -1133,7 +1132,11 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                             _ASM__cmpVarType(act, LuaTable);
                             a->jne(_f);
                             //Search for this value.
-                            _ASMH__rs_searchInTable(act, std::pair<bool, std::pair<x86::Gp, TString*>>(false, std::pair<x86::Gp, TString*>(x86::noReg, (TString*)actual->a)), act, pointer);
+                            if (act.id() < 12) {
+                                a->movabs(x86::r11, 0x0000FFFFFFFFFFFFULL);
+                                a->and_(act, x86::r11);
+                            }
+                            _ASMH__rs_searchInTable(act, std::pair<bool, std::pair<x86::Gp, TString*>>(false, std::pair<x86::Gp, TString*>(x86::noReg, (TString*)actual->a)), act, false);
                             a->jmp(_f1);
                             a->bind(_f);
                             _ASM_crashINSTR(_lua_es_UnknownDataIdx);
@@ -1447,7 +1450,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
             }
             case _L_PATH: {
                 _HELPER__runHooksFor(ret, _R_TRASHDATA);
-                x86::Gp path = _ASM__getPathToSelGp(pointer->addr->getData(), x86::r11, scope, (!_CPP__existsMoreOnWay(k, pos) && getPointerInsteadofRawD), true); //x86::Gp
+                x86::Gp path = _ASM__getPathToSelGp(pointer->addr->getData(), x86::rcx, scope, (!_CPP__existsMoreOnWay(k, pos) && getPointerInsteadofRawD), true); //x86::Gp
                 if (pointer->LuaTYPE != 0x2 && _OPMODE == _L_NONE) {
                     _hasTypePath = true;
                     lType0 = (uint8_t)pointer->LuaTYPE;

@@ -1,7 +1,8 @@
 
 set(CLUA_CORE_LIBS
-	clibString.cpp
-)
+	${CMAKE_CURRENT_SOURCE_DIR}/clibString.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/clibStream.cpp
+	PARENT_SCOPE)
 
 
 

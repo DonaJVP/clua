@@ -12,10 +12,11 @@ set(CLUA_LIB_HEADERS
 	lua.hpp
 )
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${ASMJIT_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/libs/)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${ASMJIT_INCLUDE_DIRS})
+add_subdirectory(libs)
 
 if(BUILD_CLUA_LIB)
-add_library(clua STATIC ${CLUA_CORE_SRC} ${ASMJIT_SRC})
+add_library(clua STATIC ${CLUA_CORE_SRC} ${ASMJIT_SRC} ${CLUA_CORE_LIBS})
 target_link_libraries(clua ${LIBS} )
 set(CLUA_STATIC_LIB clua)
 set(CLUA_LIBS clua)

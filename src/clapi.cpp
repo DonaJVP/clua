@@ -358,6 +358,7 @@ void LuaErrorHandler::reportWarning(const lua_ErrSignals signal, const size_t fu
 #include <random>
 #include <fstream>
 #include <iterator>
+#include "clibInit.hpp"
 
 int main(int argc, char* argv[]) {
 	// Main
@@ -384,6 +385,9 @@ int main(int argc, char* argv[]) {
 	memset((void*)m_General->nodes, 0, 0xFFFF*sizeof(Node));
 	m_General->hmask = 0xFFFF;
 	m_LuaErrorHandler = leh;
+	std::cout << "Initializing libraries" << std::endl;
+	LIBC__InitializeStreamLibrary(m_General);
+	LIBC__InitializeStringLibrary(m_General);
 	if (argc > 1) {
 		// Proc files.
 		std::ifstream inputFile(argv[1]);

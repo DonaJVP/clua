@@ -1752,6 +1752,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
         _0_0_0_CMPTIME_ASM_isScript = false;
     } else { //All locals from script SHOULD be saved in a map.
         a.sub(x86::rsp, 520); // Starting from byte 128 it should be arguments pass, and the starting from 256 should be return place 
+        finalAllocMem = 520;
         if (s > 0) {
             fMem = mmap(nullptr, s, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
             _0_0_0_CMPTIME_ASM_scriptMem = fMem;

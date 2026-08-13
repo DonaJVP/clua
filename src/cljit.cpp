@@ -574,7 +574,6 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                                 sym.slot = _counter2*8;
                             }
                             sym.id = _LABEL->addr->getHeaderVarString();
-                            m_LuaErrorHandler->reportError(_lua_es_Illegal, 0, std::string("FFF_C: ")+std::to_string(sym.slot)+", "+sym.id);
                             startPoint->symbols.insert(std::pair<std::string, lua_localSymbol>(sym.id, sym));
                             _current++;
                         }

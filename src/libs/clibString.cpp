@@ -93,7 +93,7 @@ Values _LibraryC__reverse(Values RDI, uint64_t a, uint64_t b) {
 
 // Set add.
 void LIBC__InitializeStringLibrary(lua_Table *toSave) {
-    TString *stringT_S = returnCompiledString("string");
+    TString *stringT_S = returnCompiledString("stringT");
     lua_Table *stringT = new lua_Table();
     stringT->hmask = 0xFF;
     stringT->_BOOL_constTable = true; // Can't modify

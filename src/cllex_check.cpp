@@ -756,6 +756,7 @@ LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *
     while (true) {
         try {
             cache0 = k->at(*pos);
+            
         } catch (std::out_of_range &e) {
             return getted;
         }
@@ -777,12 +778,15 @@ LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *
                 vnm = true;
                 if (_returnEmptyIfVariables) {
                     return LuaLexFrame(_L_NONE);
+                } else {
+                    //TODO: Compute manually those variables.
                 }
                 break;
             }
             case _L_EXPRESSION: {
                 uint32_t _0 = 0;
                 LuaLexFrame f = getExprValue(k, &_0, scope, _returnEmptyIfVariables);
+                getted = f;
                 break;
             }
             // Arithmetic
@@ -861,6 +865,9 @@ LuaLexFrame getExprValue(std::vector<LuaLexFrame> *k, uint32_t *pos, lua_Scope *
             case _L_CONCAT: {
                 cnt = true;
                 break;
+            }
+            case _L_OVERALLTYPECHECKER: {
+                break; // Skip this.
             }
             // Other
             default: {

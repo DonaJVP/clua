@@ -305,6 +305,7 @@ LuaLexFrame makeSingleTable(std::vector<LuaLexFrame> *vct, uint32_t *pos) {
             case _L_TABLE_START: {
                 tableVec->push_back(makeSingleTable(vct, pos));
                 *pos = *pos + 1; // Ignore _L_TABLE_END instruction.
+                break;
             }
             case _L_F_ARGS_START: {
                 *pos = *pos + 1;
@@ -337,7 +338,7 @@ LuaLexFrame makeSingleTable(std::vector<LuaLexFrame> *vct, uint32_t *pos) {
                         tableVec->push_back(_expr);
                     }
                 }
-                //*pos = *pos + 1; // Skip _L_F_ARGS_END
+                *pos = *pos + 1; // Skip _L_F_ARGS_END
                 break;
             }
             case _L_FUNCTION: { // Special.
@@ -350,6 +351,7 @@ LuaLexFrame makeSingleTable(std::vector<LuaLexFrame> *vct, uint32_t *pos) {
             }
             default: {
                 tableVec->push_back(*it);
+                break;
             }
         }
         *pos = *pos + 1;
@@ -661,7 +663,7 @@ std::pair<bool, lua_Table*> _LTABLE_HELPER__buildTable(std::vector<LuaLexFrame> 
                 std::string vName = packet->addr->getHeaderVarString();
                 TString *vSlot = returnCompiledString(vName);
                 // Get data.
-                if (!_canBuildTable(&packet->EXPR_BRKT)) {
+                if (!_canBuildTable(&packet->EXPR.at(0))) {
                     return {false, nullptr};
                 } else {
                     // Seek at info.
@@ -675,8 +677,8 @@ std::pair<bool, lua_Table*> _LTABLE_HELPER__buildTable(std::vector<LuaLexFrame> 
                 // Well continue.
                 // Must be a indexer at all... lVarControl.cpp
                 uint32_t _pos = 0;
-                LuaLexFrame value = getExprValue(&packet->EXPR_BRKT, &_pos, nullptr, true);
-                Values data;
+                LuaLexFrame value = getExprValue(&packet->EXPR.at(0), &_pos, nullptr, true);
+                Values data = 0x0000000000000000ULL; // Make default: NIL
                 if (value.key != _L_NONE) {
                     switch (value.key) {
                         case _L_STRING: {
@@ -698,11 +700,11 @@ std::pair<bool, lua_Table*> _LTABLE_HELPER__buildTable(std::vector<LuaLexFrame> 
                             break;
                         }
                         case _L_TRUE: {
-                            data = 0x0000000000000001ULL;
+                            data = 0x7FF3000000000001ULL;
                             break;
                         }
                         case _L_FALSE: {
-                            data = 0x0000000000000001ULL;
+                            data = 0x0000000000000000ULL;
                             break;
                         }
                         default: {

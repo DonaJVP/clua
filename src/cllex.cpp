@@ -308,6 +308,7 @@ std::vector<LuaLexFrame> LuaLex::ParserSecondStage(std::vector<std::string> data
 	LuaLexFrame CACHE_LEX;
 	LuaLexFrame *ptrToLastLexF = nullptr;
 	_Lua_Lex_Keys KY = _L_NONE;
+	bool _objControl = false;
 
 	uint32_t words_count = 0;
 	uint32_t wordpos = 0;
@@ -501,6 +502,20 @@ std::vector<LuaLexFrame> LuaLex::ParserSecondStage(std::vector<std::string> data
 		}
 
 		// Flags
+		
+		if (_objControl) {
+			// Insert codename.
+			LuaLexFrame a(_L_OBJECTCODENAME);
+			a._data = std::vector<uint8_t>(key.begin(), key.end());
+			blocks.push_back(a);
+			_objControl = false;
+			goto _FLUSH;
+		}
+		
+		if (key == "_CLUA@OBJECTNAME") {
+			_objControl = !_objControl;
+			goto _FLUSH;
+		}
 		
 		if (key == "_CLUA@IGNOREVARIABLESCHECK_") {
 			LuaLexFrame _K(_L_FLAG_IGNORE_VARCHECK);
@@ -927,6 +942,12 @@ _GARGABE:
 			goto _FLUSH;
 		}*/
 		
+		if (key == ":") {
+			LuaLexFrame _K(_L_ON_TO_GO);
+			_K.ATTRIB = 0xFF;
+			blocks.push_back(_K);
+			goto _FLUSH;
+		}
 		
 
 		if (!A_T_R.first && key.find('.') != std::string::npos) { //Access variable. [Table]
@@ -954,7 +975,7 @@ _GARGABE:
 			for (std::string &d :_C_CACHE) {
 				if (d == ".") {
 					_VAR.key = _L_ON_TO_GO;
-					_VAR.keystring = "->";
+					_VAR.keystring = ".";
 					_VAR._data = std::vector<uint8_t>();
 					_VAR.ATTRIB = 0;
 					blocks.push_back(_VAR);

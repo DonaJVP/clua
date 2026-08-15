@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <exception>
 #include <cstring>
 #include <iostream>
 #include <ostream>
@@ -360,6 +361,7 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
     uint32_t to_reserv = 0;
     LuaLexFrame _LAST_FRAME;
     LuaLexFrame _FRM;
+    LuaLexFrame _CODENAME(_L_NONE);
     //pos--;
     uint32_t _pos_lastscope = 0;
     if (_ONLYFUNC) {
@@ -510,6 +512,18 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                 lua_checkExprData(&_FRM.EXPR, _LastBLOCK, &toRecover, &_LastBLOCK->HottestVariables);
                 break;
             }
+            case _L_RETURN: {
+                lua_biOpCode c;
+                c.OPCODE = l_b_o_c_RET;
+                if (_FRM.ATTRIB) { // Empty.
+                    c.ATR = 0;
+                } else {
+                    c.ATR = 1;
+                    c.LLF = _FRM.EXPR_BRKT;
+                }
+                opcodes.push_back(c);
+                break;
+            }
             case _L_NEWLINE: {
                 lua_biOpCode c;
                 c.OPCODE = l_b_o_c_SSE;
@@ -602,6 +616,10 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                 }
                 break;
             }
+            case _L_OBJECTCODENAME: {
+                _CODENAME = _FRM;
+                break;
+            }
             case _L_CALL: {
                 lua_biOpCode c;
                 if (_FRM.ATTRIB == 0) {
@@ -613,6 +631,12 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
                     c.LLF = std::move(_vct);
                     c.ATR = 0;
                     c.fixedaddr = _FRM.skipcheck ? ((uint64_t)_FRM.a) : 0;
+                    if (_CODENAME.key != _L_NONE) {
+                        std::string *str = new std::string();
+                        str->append(std::string(_CODENAME._data.begin(), _CODENAME._data.end()));
+                        c.ptr = str; // Assign a new.
+                        _CODENAME = LuaLexFrame(_L_NONE);
+                    }
                 } else {
                     c.ATR = 1;
                     c.LLF = _FRM.EXPR_BRKT; // Raw form.
@@ -1622,6 +1646,7 @@ uint32_t _stackframe_getMaxValue(uint64_t args) {
 // Search if the var are in symbols.
 
 #include <deque>
+#include "clobject.hpp"
 StringLogger qlog0;
 
 // Precompiler [Uses _Lua_Keywords_Asm for optimization and labeling]
@@ -1681,6 +1706,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     Label k4;
     //FuncSignature sig = FuncSignature::build<FuncArgs*, FuncArgs*>(CallConv::kIdHost);
     //a.emit_prolog(sig);
+    Label _ENDPOINT_ = a.new_label();
     a.push(x86::rbp);
     a.mov(x86::rbp, x86::rsp);
     frontNlowerPushes(&a, _CODE, true);
@@ -1760,45 +1786,6 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
             a.mov(x86::qword_ptr(x86::rbp, -16), x86::rcx);
         }
     }
-    /*if (s > 0) {
-        a.xor_(x86::rdi, x86::rdi);
-        a.mov(x86::rsi, s);
-        a.mov(x86::rdx, 0x03);
-        a.mov(x86::r10, 0x22);
-        a.mov(x86::r8, -1);
-        a.xor_(x86::r9, x86::r9);
-        a.mov(x86::rax, 9);
-        a.syscall();
-        a.mov(x86::qword_ptr(x86::rsp, 24), x86::rax);
-        // Now as we got the memory page, propagate it.
-        // Mem on rax
-        if (THREADRIPPER->toEXbytes > 0) {
-            Label _loop = a.new_label();
-            Label _exit = a.new_label();
-            a.mov(x86::r9, x86::rax);
-            a.mov(x86::rdi, x86::qword_ptr(x86::rsp, s));
-            uint32_t pos = 0;
-            //while (THREADRIPPER->toEXbytes != 0) {
-            //rdx = cache obj
-            //rcx = counter+1
-            //rax = per counter
-            //rdi = arguments obj
-            //rsi = arguments count
-            //r9 = mmap obj
-            a.mov(x86::rsi, x86::qword_ptr(x86::rdi));
-            a.mov(x86::rcx, x86::rsi);
-            a.mov(x86::r8, 0x10);
-            a.bind(_loop);
-            a.mov(x86::rax, x86::rsi);
-            a.mul(x86::r8);
-            a.add(x86::rax, 0x08);
-            a.mov(x86::rdx, x86::qword_ptr(x86::rdi, x86::rax));
-            a.sub(x86::rax, 0x08);
-            a.mov(x86::qword_ptr(x86::r9, x86::rax), x86::rdx);
-            a.loop(_loop);
-            a.bind(_exit);
-        }
-    }*/
     std::vector<_closure_helper> closures;
     uint_fast16_t for_cnt_;
     ActualScope = THREADRIPPER;
@@ -2318,12 +2305,60 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         
                         qlog0._log2("CallFunc( fixedaddr )::End\n");
                     } else {
+                        uint32_t pos = 0;
+                        x86::Gp reg;
+                        x86::Gp rbx_;
+                        std::cout << cache.ptr << std::endl;
+                        if (cache.ptr) {
+                            // A whole new design for objects.
+                            // Get the object name.
+                            std::string str = *((std::string*)cache.ptr);
+                            std::cout << "[" <<str << "]" << std::endl;
+                            if (ObjectFuncIds.find(str) == ObjectFuncIds.end()) {
+                                m_LuaErrorHandler->reportError(_lua_es_UnknownErr, 0, ("Invalid object name: "+str).c_str());
+                                m_LuaErrorHandler->reportWarning(_lua_es_UnknownDataIdx, 0, "Skipping object execution.");
+                            } else {
+                                std::unordered_map<std::string, uint64_t> *_TABLE = &ObjectFuncIds.at(str);
+                                // Get the first term.
+                                if (cache.LLF.at(0).key == _L_PATH && !cache.LLF.at(0).addr->needToResolveAddr()) {
+                                    uint64_t ptr = 0;
+                                    // Seek the last key.
+                                    LuaLexFrame *FRAMEBACK = cache.LLF.at(0).addr->getBack();
+                                    std::string cfName = std::string(FRAMEBACK->_data.begin(), FRAMEBACK->_data.end());//cache.LLF.at(0).addr->getHeaderVarString();
+                                    std::cout << "[" << cfName << "]" << std::endl;
+                                    try {
+                                        ptr = _TABLE->at(cfName);
+                                    } catch (std::out_of_range &e) {
+                                        m_LuaErrorHandler->reportWarning(_lua_es_NonFunction, 0, "Object's required function doesn't exist!");
+                                    }
+                                    // We got function pointer, set first those function arguments.
+                                    a.movabs(x86::rbx, ptr);
+                                    LuaLexFrame _SELF(_L_PATH); 
+                                    //SELF.addr = cache.LLF.at(0).addr;
+                                    // Seek the object pointer.
+                                    LuaLexFrame fPtr = *cache.LLF.at(0).addr->getHeader();
+                                    lua_AddrPath *p = new lua_AddrPath();
+                                    p->assignNewAddr(std::vector<LuaLexFrame>({fPtr}));
+                                    p->getBack()->_LK = true;
+                                    _SELF.addr = p;
+                                    _SELF.ATTRIB = 0;
+                                    lua_Expression E = _CPP__insertToFirstPosition(std::vector<LuaLexFrame>{_SELF}, &cache.p);
+                                    _F_ASM_MAKEFUNCTIONARGUMENTS(&E, &a, ActualScope, false, 0);
+                                    a.call(x86::rbx);
+                                    goto _uGen0;
+                                } else if (cache.LLF.at(0).key == _L_PATH && cache.LLF.at(0).addr->needToResolveAddr()) {
+                                    goto _CACHEPTR_cancel;
+                                } else if (cache.LLF.at(0).key != _L_PATH) {
+                                    goto _CACHEPTR_cancel;
+                                }
+                            }
+                        }
+                        _CACHEPTR_cancel:
                         // Let's find their address.
                         qlog0._log2("CallFunc( common )::Start\n");
-                        uint32_t pos = 0;
                         //_F_ASM_SEARCHVALUE(cache.path->getData(), &pos, &a, ActualScope, false);
-                        x86::Gp rbx_ = x86::rbx;
-                        x86::Gp reg = CLUA_EvalExprNReturn(&cache.LLF, ActualScope, std::pair<bool, x86::Gp>(true, x86::rbx), false);
+                        rbx_ = x86::rbx;
+                        reg = CLUA_EvalExprNReturn(&cache.LLF, ActualScope, std::pair<bool, x86::Gp>(true, x86::rbx), false);
                         if (reg != x86::rbx && reg.id() < 12) {
                             a.mov(x86::rbx, reg);
                         } else if (reg.id() > 11) {
@@ -2340,17 +2375,27 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         //a.sar(x86::r10, 16); 
                         //a.ud2();
                         a.call(rbx_);
+                        _uGen0:
                         qlog0._log2("CallFunc( common )::End\n");
                     }
                 }
                 _LK = cache.OPCODE;
                 break;
             }
-            case l_b_o_c_VTN: { // Maybe its like this: local var0 = hallo["there"];
-                if (_LK == l_b_o_c_DEC) {
+            case l_b_o_c_RET: {
+                if (cache.ATR) {
+                    reg = CLUA_EvalExprNReturn(&cache.LLF, ActualScope, std::pair<bool, x86::Gp>(true, x86::rax), false);
+                    if (reg != x86::rax)
+                        a.mov(x86::rax, reg);
+                    a.jmp(_ENDPOINT_);
                 } else {
-                    //No other usage.. Crash.
+                    a.jmp(_ENDPOINT_);
                 }
+                break;
+            }
+            case l_b_o_c_VTN: { // Maybe its like this: local var0 = hallo["there"];
+                //OBSOLETE.
+                break;
             }
             default: {
                 // Huh?
@@ -2360,6 +2405,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     }
     //Free those pointers.
     _END_:
+    a.bind(_ENDPOINT_);
     a.xor_(x86::rax, x86::rax);
     a.add(x86::rsp, finalAllocMem);
     frontNlowerPushes(&a, _CODE, false);

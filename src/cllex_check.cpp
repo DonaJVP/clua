@@ -1109,14 +1109,16 @@ lua_Expression computeExpression(lua_Expression tc, _SCOPE_EMU *scope, std::vect
                             Values *ptr = getValueFromtable(cache_0_.addr->getData());
                             if ((uintptr_t)ptr != 0xF00000000000000F) { // That number is represented as NULL for it.
                                 _CALL.a = ptr; // Skip the first 8 bytes
-                                _CALL.skipcheck = true; // Mark it as skippable check
+                                _CALL.skipcheck = ptr != nullptr ? true : false; // Mark it as skippable check
+                            } else {
+                                _CALL.a = nullptr;
+                                _CALL.skipcheck = false;
                             }
                         } else {
                             _CALL.a = nullptr;
                             _CALL.skipcheck = false;
                         }
                         _FINAL:
-                        
                         
                         // Might need to know their return value
                         
@@ -1343,6 +1345,7 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     uint8_t _1_ifst = false;
     uint8_t _1_fors = false;
     uint8_t _1_whil = false;
+    uint8_t _1_ret0 = false;
     uint8_t _2_0001 = false;
     std::vector<LuaLexFrame> preRes;
     std::vector<LuaLexFrame> *toFocus = &preRes;
@@ -1497,13 +1500,32 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                 _1_Decl = true;
                 break;
             }
-            
+            case _L_RETURN: {
+                if (AF.skipcheck) {
+                    toFocus->push_back(AF);
+                    break;
+                }
+                _1_ret0++;
+                break;
+            }
             case _L_EXPRESSION: {
+                if (_1_ret0) {
+                    LuaLexFrame _F(_L_RETURN);
+                    if (AF.EXPR.size())
+                        _F.EXPR_BRKT = std::move(computeExpression(AF.EXPR, nowScope, nullptr, false).at(0));
+                    _F.ATTRIB = AF.EXPR.size() ? 0 : 1;
+                    _F.skipcheck = true; // Huh
+                    toFocus->push_back(_F);
+                    _1_ret0--;
+                    _latestKey = _L_NONE;
+                    break;
+                }
                 if (_1_whil && _latestKey == _L_WHILE) {
                     LuaLexFrame _F(_L_WHILE);
                     _F.EXPR = std::move(computeExpression(AF.EXPR, nowScope, nullptr, true));
                     toFocus->push_back(_F);
                     _1_whil--;
+                    _latestKey = _L_NONE;
                     break;
                 }
                 if (_1_fors && _latestKey == _L_FOR) {
@@ -1636,7 +1658,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     std::vector<LuaLexFrame> *rVector = &final_;
     LuaLexFrame *funcPtr = nullptr;
     std::vector<LuaLexFrame> nrVector;
-    bool _returnKeyword = false;
     uint32_t zPos = 0;
     _reset:
     while (true) {
@@ -1656,10 +1677,6 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
             break;
         }
         switch (AF.key) {
-            case _L_RETURN: {
-                _returnKeyword = true;
-                break;
-            }
             // Interleaving scopes.
             case _L_FUNCTION: {
                 if (AF.ATTRIB > 0) {
@@ -1861,16 +1878,16 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                     AF.EXPR.at(_spos) = res;
                     _spos++;
                 }
-                LuaLexFrame _RET;
+                /*LuaLexFrame _RET;
                 if (_returnKeyword) {
                     _RET = LuaLexFrame(_L_RETURN);
-                    if (_RET.EXPR.size() => 1)
+                    if (_RET.EXPR.size() >= 1)
                         _RET.EXPR_BRKT = AF.EXPR.at(0);
                     else
                         _RET.ATTRIB = 1;
                 }
                 rVector->push_back(_returnKeyword ? _RET : AF);
-                _returnKeyword = false;
+                _returnKeyword = false;*/
                 break;
             }
             case _L_FOR: {

@@ -825,6 +825,9 @@ _GARGABE:
 		if (key == "return") {
 			LuaLexFrame _K(_L_RETURN);
 			blocks.push_back(_K);
+			LuaLexFrame _K2(_L_F_ARGS_START);
+			blocks.push_back(_K2);
+			_local_toclose = true;
 			goto _FLUSH;
 		}
 		

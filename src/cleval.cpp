@@ -7,6 +7,8 @@
 #include <asmjit/host.h>
 #include <stdexcept>
 #include <sys/ucontext.h>
+#include "clobject.hpp"
+#include <exception>
 
 using namespace asmjit;
 
@@ -119,7 +121,16 @@ struct _Warning {
 #include <deque>
 static std::deque<_Warning> queue;
 
-
+std::vector<std::vector<LuaLexFrame>> _CPP__insertToFirstPosition(std::vector<LuaLexFrame> toPush, lua_Expression *expr) {
+    std::vector<std::vector<LuaLexFrame>> *e = (std::vector<std::vector<LuaLexFrame>>*)expr;
+    std::vector<std::vector<LuaLexFrame>> toC;
+    toC.push_back(toPush);
+    for (std::vector<LuaLexFrame> &VCT: *e) {
+        toC.push_back(VCT);
+    }
+    //toC.insert(toC.cend(), e->begin(), e->end());
+    return toC;
+}
 
 x86::Gp _CPP__getGeneralPurposeRegister(greg_t reg) {
     switch (reg) {
@@ -1169,6 +1180,9 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
             case _L_ON_TO_GO: {
                 if (actual->ATTRIB == 0) { // non brkt
                     continuity = true;
+                } else if (actual->ATTRIB == 0xFF) {
+                    // Object calling.
+                    continuity = true;
                 } else {
                     m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Unexpected reading!");
                     _ASM__insertNull(ret);
@@ -1285,6 +1299,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
     bool _quotient_r = false;
     bool _hasTypePath = false;
     LuaLexFrame *doomPath0 = nullptr;
+    LuaLexFrame _CODENAME(_L_NONE);
     uint8_t lType0 = 0;
     while (true) {
         try {
@@ -1347,6 +1362,10 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
             }
         }
         switch (pointer->key) {
+            case _L_OBJECTCODENAME: {
+                _CODENAME = *pointer;
+                break;
+            }
             // Expression case.
             case _L_EXPRESSION: {
                 _HELPER__runHooksFor(ret, _R_TRASHDATA); // Save pointer.
@@ -1412,6 +1431,41 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                 } else {
                     // Let's find their address.
                     qlog0._log2("CallFunc( common )::Start   []\n");
+                    if (_CODENAME.key != _L_NONE) { // There are a object declaration
+                        // Get name of the table reference.
+                        std::string str = std::string(_CODENAME._data.begin(),_CODENAME._data.end());
+                        // Proceed.
+                        if (ObjectFuncIds.find(str) == ObjectFuncIds.end()) {
+                            m_LuaErrorHandler->reportError(_lua_es_NotCorrect, 0, "Invalid object name: "+str);
+                            m_LuaErrorHandler->reportWarning(_lua_es_UnknownDataIdx, 0, "Skipping object execution.");
+                        } else {
+                            std::unordered_map<std::string, uint64_t> *_TABLE = &ObjectFuncIds.at(str);
+                            // Get the first term.
+                            if (pointer->ATTRIB && !pointer->addr->needToResolveAddr()) {
+                                uint64_t ptr = 0;
+                                std::string cfName = pointer->addr->getHeaderVarString();
+                                try {
+                                    ptr = _TABLE->at(cfName);
+                                } catch (std::out_of_range &e) {
+                                    m_LuaErrorHandler->reportWarning(_lua_es_NonFunction, 0, "Object's required function doesn't exist!");
+                                }
+                                // We got function pointer, set first those function arguments.
+                                _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
+                                LuaLexFrame _SELF(_L_PATH); 
+                                LuaLexFrame fPtr = *pointer->addr->getHeader();
+                                lua_AddrPath *p = new lua_AddrPath();
+                                p->assignNewAddr(std::vector<LuaLexFrame>({fPtr}));
+                                p->getBack()->_LK = true;
+                                _SELF.addr = p;
+                                _SELF.ATTRIB = 0;
+                                lua_Expression E = _CPP__insertToFirstPosition(std::vector<LuaLexFrame>{_SELF}, &pointer->EXPR);
+                                _F_ASM_MAKEFUNCTIONARGUMENTS(&E, a, scope, false, 0);
+                                a->movabs(x86::r9, ptr);
+                                a->call(x86::r9);
+                                goto _terminate;
+                            }
+                        }
+                    }
                     uint64_t ptr0 = (uint64_t)(new uint64_t(0));
                     x86::Gp path = _ASM__getPathToSelGp(pointer->addr->getData(), x86::r10, scope, false, true);
                     a->movabs(x86::r9, ptr0);
@@ -1425,6 +1479,7 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                     a->call(x86::r8);
                     qlog0._log2("CallFunc( common )::End   []\n");
                 }
+                _terminate:
                 _CPP__turnRegistersAfterCall();
                 if (_OPMODE != _L_NONE) {
                     if (_CPP__getcntId(ret) == _R_TRASHDATA) {

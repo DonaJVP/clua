@@ -433,6 +433,7 @@ enum _Lua_Lex_Keys {					// Lua Default	|	Addon				| Usable code for scripting |
 	_L_FLAG_CONTINUE_FRAME2	=	81,
 	// Some preconfigured keys
 	_L_CONSTTABLE			=	82,
+	_L_OBJECTCODENAME		=	83,
 };
 
 extern const std::string _LuaKeysString[85];
@@ -481,6 +482,8 @@ public:
 	LuaLexFrame *getBack();
 	std::vector<LuaLexFrame> *getData();
 	std::string getHeaderVarString();
+	uint64_t ATTRIB = 0;
+	void assignNewAddr(const std::vector<LuaLexFrame> new_);
 private:
 	std::vector<LuaLexFrame> rawAddr;
 };
@@ -529,6 +532,7 @@ struct lua_localSymbol {
 	asmjit::x86::Gp register_ = asmjit::x86::rax;
 	std::string id = "";
 	LuaType type = LuaUnknown;
+	uint64_t rawdata = 0;
 };
 struct _helperLua_ArgsPos {
 	int32_t rdi = 0;
@@ -589,7 +593,7 @@ enum lua_1_biOpCode : uint8_t {
 	l_b_o_c_DEP = 23,	// Dependency flow, just for nested functions
 	l_b_o_c_NOP = 24,	// No operation
 	l_b_o_c_STM = 25,	// declaration.Local.Multiple
-	
+	l_b_o_c_RET = 26,	// return <expr>
 };
 struct lua_biOpCode {
 	lua_biOpCode() :
@@ -905,7 +909,7 @@ inline void __ASM_callback_nothingX_(asmjit::x86::Assembler *a, _XREGISTER_ *reg
 asmjit::x86::Gp _ASMH__parseVarCacheRef(uint8_t r);
 lua_localSymbol *searchSavedGeneralVars(const std::string id);
 _LUA_XMM_REGISTERS _CPP_getXMMfromASM(asmjit::Reg rId);
-
+std::vector<std::vector<LuaLexFrame>> _CPP__insertToFirstPosition(std::vector<LuaLexFrame> toPush, lua_Expression *expr);
 
 
 

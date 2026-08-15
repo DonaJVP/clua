@@ -2,6 +2,7 @@
 set(CLUA_CORE_LIBS
 	${CMAKE_CURRENT_SOURCE_DIR}/clibString.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/clibStream.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/clibDebugMethods.cpp
 	PARENT_SCOPE)
 
 

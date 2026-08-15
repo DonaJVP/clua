@@ -359,6 +359,7 @@ void LuaErrorHandler::reportWarning(const lua_ErrSignals signal, const size_t fu
 #include <fstream>
 #include <iterator>
 #include "clibInit.hpp"
+#include "clobject.hpp"
 
 int main(int argc, char* argv[]) {
 	// Main
@@ -388,6 +389,8 @@ int main(int argc, char* argv[]) {
 	std::cout << "Initializing libraries" << std::endl;
 	LIBC__InitializeStreamLibrary(m_General);
 	LIBC__InitializeStringLibrary(m_General);
+	LIBC__InitializeDebugKit(m_General);
+	_TEST__registerObject(m_General); //TEST
 	if (argc > 1) {
 		// Proc files.
 		std::ifstream inputFile(argv[1]);

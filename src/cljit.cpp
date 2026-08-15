@@ -1707,6 +1707,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     //FuncSignature sig = FuncSignature::build<FuncArgs*, FuncArgs*>(CallConv::kIdHost);
     //a.emit_prolog(sig);
     Label _ENDPOINT_ = a.new_label();
+    Label _ENDPOINT_NONXORRAX_ = a.new_label();
     a.push(x86::rbp);
     a.mov(x86::rbp, x86::rsp);
     frontNlowerPushes(&a, _CODE, true);
@@ -2384,10 +2385,10 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
             }
             case l_b_o_c_RET: {
                 if (cache.ATR) {
-                    reg = CLUA_EvalExprNReturn(&cache.LLF, ActualScope, std::pair<bool, x86::Gp>(true, x86::rax), false);
+                    x86::Gp reg = CLUA_EvalExprNReturn(&cache.LLF, ActualScope, std::pair<bool, x86::Gp>(true, x86::rax), false);
                     if (reg != x86::rax)
                         a.mov(x86::rax, reg);
-                    a.jmp(_ENDPOINT_);
+                    a.jmp(_ENDPOINT_NONXORRAX_);
                 } else {
                     a.jmp(_ENDPOINT_);
                 }
@@ -2407,6 +2408,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     _END_:
     a.bind(_ENDPOINT_);
     a.xor_(x86::rax, x86::rax);
+    a.bind(_ENDPOINT_NONXORRAX_);
     a.add(x86::rsp, finalAllocMem);
     frontNlowerPushes(&a, _CODE, false);
     a.mov(x86::rsp, x86::rbp);

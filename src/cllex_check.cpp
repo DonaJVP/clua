@@ -30,7 +30,7 @@ std::string luaLexFrameKeyToString(_Lua_Lex_Keys k) {
 
 //BEGIN lua_AddrPath
 lua_AddrPath::lua_AddrPath() {}
-bool lua_AddrPath::needToResolveAddr() { return (rawAddr.size() > 1); }
+bool lua_AddrPath::needToResolveAddr() { return ATTRIB ? false : (rawAddr.size() > 1); }
 LuaLexFrame *lua_AddrPath::getHeader() { return &rawAddr.at(0); }
 LuaLexFrame *lua_AddrPath::getBack() { return &rawAddr.at(rawAddr.size()-1); }
 std::string lua_AddrPath::getHeaderVarString() {
@@ -38,6 +38,9 @@ std::string lua_AddrPath::getHeaderVarString() {
     //std::cout << header << "; " << rawAddr.size() << std::endl;
     std::string a = std::string(header->_data.begin(), header->_data.end());
     return a;
+}
+void lua_AddrPath::assignNewAddr(const std::vector<LuaLexFrame> new_) {
+    rawAddr = std::move(new_);
 }
 std::vector<LuaLexFrame> *lua_AddrPath::getData() { return &rawAddr; }
 //May include something related.
@@ -162,6 +165,7 @@ LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
     bool _FIRSTADDR = false;
     bool declr = false;
     bool local = false;
+    uint8_t atr = 0;
     while (true) {
         try {
             cache = keys->at(*pos);
@@ -184,7 +188,12 @@ LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
                 break;
             }
             case _L_ON_TO_GO: {
-                if (cache.ATTRIB) { // Non ".", but []
+                if (cache.ATTRIB == 0xFF) { // A call between a Object.
+                    atr = cache.ATTRIB;
+                    data->push_back(cache);
+                    break;
+                }
+                if (cache.ATTRIB == 1) { // Non ".", but []
                     // Compile their contents & put to vector.
                     *pos = *pos + 1;
                     data->push_back(makeSingleExprB(keys, pos));
@@ -204,6 +213,7 @@ LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
                 toRet.key = _L_PATH;
                 toRet.addr = addr;
                 toRet.addr->getBack()->_LK = true;
+                toRet.addr->ATTRIB = atr;
                 return toRet;
             }
         }
@@ -1626,6 +1636,7 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
     std::vector<LuaLexFrame> *rVector = &final_;
     LuaLexFrame *funcPtr = nullptr;
     std::vector<LuaLexFrame> nrVector;
+    bool _returnKeyword = false;
     uint32_t zPos = 0;
     _reset:
     while (true) {
@@ -1645,6 +1656,10 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
             break;
         }
         switch (AF.key) {
+            case _L_RETURN: {
+                _returnKeyword = true;
+                break;
+            }
             // Interleaving scopes.
             case _L_FUNCTION: {
                 if (AF.ATTRIB > 0) {
@@ -1846,7 +1861,16 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                     AF.EXPR.at(_spos) = res;
                     _spos++;
                 }
-                rVector->push_back(AF);
+                LuaLexFrame _RET;
+                if (_returnKeyword) {
+                    _RET = LuaLexFrame(_L_RETURN);
+                    if (_RET.EXPR.size() => 1)
+                        _RET.EXPR_BRKT = AF.EXPR.at(0);
+                    else
+                        _RET.ATTRIB = 1;
+                }
+                rVector->push_back(_returnKeyword ? _RET : AF);
+                _returnKeyword = false;
                 break;
             }
             case _L_FOR: {

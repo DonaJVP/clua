@@ -7,6 +7,7 @@ set(CLUA_CORE_SRC
 	cleval.cpp
 	cljit.cpp
 	cloptimizer.cpp
+	clobject.cpp
 )
 set(CLUA_LIB_HEADERS
 	lua.hpp

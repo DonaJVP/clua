@@ -403,6 +403,7 @@ enum _parserClosureType {
 	PARENTHESES,
 	STRING,
 	STRING2,
+	INDEX,
 	NOTHING,
 };
 
@@ -544,7 +545,7 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 					continue;
 				}
 			} else {
-				m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Usage of Increment<++>");
+				m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Usage of Increment<++>");
 				return std::vector<LuaLexFrame>{_L_NOP};
 			}
 		}
@@ -587,6 +588,11 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 				k = _L_ON_TO_GO;
 				data0.ATTRIB = 0xFF;
 			}
+			if (k == _L_ON_TO_GO_P) {
+				k = _L_ON_TO_GO;
+				data0.ATTRIB = 1;
+				closure.push_back(INDEX);
+			}
 			if (!shouldntSaveKey(k)) {
 				pushNewLLF(vct, k);
 				modifyNextKey(&vct.back(), data0);
@@ -594,12 +600,21 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 			}
 			// Update closures and many more.
 			switch (k) {
+				case _L_ON_TO_GO_END: {
+					if (getLatestClosure(closure) == INDEX) {
+						closure.pop_back();
+					} else {
+						m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "After ] closure theres other non closed closure.");
+					}
+					break;
+				}
 				case _L_STRING_CTRL: {
 					if (getLatestClosure(closure) == STRING) {
 						closure.pop_back();
 						// Save string.
 						LuaLexFrame k(_L_STRING);
 						k._data = std::vector<uint8_t>(cache1.begin(), cache1.end());
+						cache1.clear();
 						vct.push_back(k);
 					} else {
 						closure.push_back(STRING);
@@ -634,7 +649,7 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 						closure.pop_back();
 						goto _AGAIN__;
 					} else {
-						m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Unordered closures detected!");
+						m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Unordered closures detected!");
 						return std::vector<LuaLexFrame>{_L_NOP};
 					}
 					break;
@@ -672,7 +687,7 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 			const _parserClosureType i = closure.back();
 			switch (i) {
 				case TABLE: {
-					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Need to close { for table!");
+					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Need to close { for table!");
 					return std::vector<LuaLexFrame>{_L_NOP};
 				}
 				case PARENTHESES: {
@@ -686,11 +701,11 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 					break;
 				}
 				case STRING: {
-					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Need to close \" for string!");
+					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Need to close \" for string!");
 					return std::vector<LuaLexFrame>{_L_NOP};
 				}
 				case STRING2: {
-					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Need to close [[ for string!");
+					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Need to close [[ for string!");
 					return std::vector<LuaLexFrame>{_L_NOP};
 				}
 				case NOTHING: {

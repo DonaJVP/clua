@@ -1,6 +1,7 @@
 #include "lua.hpp"
 #include <cstdint>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
 static bool _is_numb(uint8_t p) {
@@ -87,6 +88,85 @@ std::vector<LuaLexFrame> LuaLex::ParserThirdStage(std::vector<LuaLexFrame> keys)
 	}
 }
 
+// Reference: ASCII chart 'hexadecimal'
+bool _isOperatorByte(uint8_t byte) {
+	if (byte == 0xA) {
+		return true; // New line
+	}
+	if (byte == 0x20 || byte >= 0x22 && byte < 0x30) {
+		// First sector
+		return true;
+	}
+	if (byte >= 0x3A && byte < 0x3F) {
+		// Second sector
+		return true;
+	}
+	if (byte >= 0x5B && byte < 0x5F) {
+		// Third sector
+		return true;
+	}
+	if (byte >= 0x7B && byte <= 0x7F) {
+		// Fourth sector
+		return true;
+	}
+	return false;
+}
+
+bool _compatibleToSumBytes(uint8_t fOp, uint8_t sOp) {
+	switch (fOp) {
+		case 0x3D: {
+			switch (sOp) {
+				case 0x3C: {
+					return true;
+				}
+				case 0x3E: {
+					return true;
+				}
+				case 0x7E: {
+					return true;
+				}
+				case 0x3D: {
+					return true;
+				}
+				default: {
+					return false;
+				}
+			}
+			break;
+		}
+		case 0x2B: {
+			if (sOp != fOp) {
+				return false;
+			} else {
+				return true;
+			}
+			break;
+		}
+		case 0x2D: {
+			if (sOp != fOp) {
+				return false;
+			} else {
+				return true;
+			}
+			break;
+		}
+		default: {
+			// Do not let two bytes smash together.
+			return false;
+		}
+	}
+}
+
+uint8_t _seekNextByte(std::vector<uint8_t> &data, uint64_t *pos) {
+	uint8_t BT = 0;
+	try {
+		BT = data.at(*pos + 1);
+	} catch(std::out_of_range &e) {
+		return 0;
+	}
+	return BT;
+}
+
 std::vector<std::string> LuaLex::ParserFirstStage(std::vector<uint8_t> data) {
 	// First stage, just separate by <operators: = ! ( ) { } [ ] / * + - < > " ' | %>
 	std::vector<std::string> blocks;
@@ -94,153 +174,537 @@ std::vector<std::string> LuaLex::ParserFirstStage(std::vector<uint8_t> data) {
 	uint8_t _last_char = 0;
 	// This has no brain, yet.
 	uint8_t byte = 0;
-	uint32_t pos = 0;
+	uint8_t lbyte = 0;
+	uint64_t pos = 0;
 	uint8_t pointer_COUNT = 0;
+	uint8_t occupied = 0;
+	std::pair<uint8_t, uint8_t> opBytes;
 	for (;;) {
 		try {
 			byte = data.at(pos);
 		} catch (std::out_of_range &e) {
 			break;
 		}
-		/*if ((byte == '=') || (byte == '!') || (byte == '(') || (byte == ')')
-		 || (byte == '{') || (byte == '}') || (byte == '[') || (byte == ']')
-		 || (byte == '/') || (byte == '*') || (byte == '+') || (byte == '-')
-		 || (byte == '<') || (byte == '>') || (byte == '"') ||(byte == '\'')
-		 || (byte == '|') || (byte == '%') || (byte == '\\')|| (byte == ' ')
-		 || (byte == '.') || (byte == ',') // $ is skipped, because it is needed for $00 commands
-		) {
-			if (byte == '\n') {
-				blocks.push_back(std::string("\\n"));
-				continue;
-			}
-			if (!_is_numb(_last_char) && byte != '.') {
-				if (!cache.empty())
-					blocks.push_back(cache);
-				cache.clear();
-				blocks.push_back(std::string(sizeof(char), static_cast<char>(byte)));
-			} else {
-				blocks.push_back(std::string(sizeof(char), static_cast<char>(byte)));
-			}
-		} else {
-			cache.resize(cache.size());
-			cache.append(std::string(sizeof(char), static_cast<char>(byte)));
-		}*/
-
-		if ((byte == '=') || (byte == '!') || (byte == '(') || (byte == ')')
-			|| (byte == '{') || (byte == '}') || (byte == '[') || (byte == ']')
-			|| (byte == '/') || (byte == '*') || (byte == '+') || (byte == '-')
-			|| (byte == '<') || (byte == '>') || (byte == '"') ||(byte == '\'')
-			|| (byte == '|') || (byte == '%') || (byte == '\\')|| (byte == ' ')
-			|| (byte == ';') || (byte == ',') || (byte == ':') || (byte == '.')
-			|| (byte == 0x9) || (byte == 0xA) // $ is skipped, because it is needed for $00 commands
-		) {
-			if (byte == 0x9) {
-				//blocks.push_back(std::to_string('\n'));
-				if (!cache.empty())
-					blocks.push_back(cache);
-				cache.clear();
-				pos++;
-				continue; // Skip tab
-			}
-			if (byte == 0xA) {
-				if (!cache.empty())
-					blocks.push_back(cache);
-				cache.clear();
-				blocks.push_back("\n");
+		if (byte == 0x9) {
+			byte = 0x20;
+		}
+		// First, identify it as a number.
+		// lbyte is optional, but next number.
+		if (byte == 0x2E) {
+			if (_is_numb(_seekNextByte(data, &pos))) {
+				// A floating value
+				cache.push_back(byte);
 				pos++;
 				continue;
 			}
-			
-			if (byte == '.') {
-				if (!cache.empty())
+		}
+		if (_isOperatorByte(byte)) {
+			if (occupied == 0) {
+				// If theres data at cache then push it.
+				if (!cache.empty()) {
 					blocks.push_back(cache);
-				cache.clear();
-				pointer_COUNT++;
-				pos++;
-				continue;
-			} else {
-				if (pointer_COUNT > 0) {
-					std::string k;
-					for (int i = 0; i < pointer_COUNT; i++) {
-						k.push_back('.');
-					}
-					blocks.push_back(k);
-					pointer_COUNT = 0;
-				}
-				if (!cache.empty())
-					blocks.push_back(cache);
-				cache.clear();
-			}
-			
-			blocks.push_back(std::string(sizeof(char), static_cast<char>(byte)));
-		} else {
-			/*if (byte == '.') {
-				uint8_t p1 = 0;
-				uint8_t p2 = 0;
-				std::string c;
-				try {
-					p1 = data.at(pos+1);
-					pos++;
-					if (p1 == '.')
-						c.push_back(p1);
-					else
-						pos--;
-				} catch (std::out_of_range &e) {
-					goto _CONT_C_C_;
-				}
-				try {
-					p2 = data.at(pos+2);
-					pos++;
-					if (p2 == '.')
-						c.push_back(p2);
-					else
-						pos--;
-				} catch (std::out_of_range &e) {
-					goto _CONT_C_C_;
-				}
-				if (!c.empty()) {
-					if (!cache.empty()) 
-						blocks.push_back(cache);
 					cache.clear();
-					c.push_back(byte);
-					blocks.push_back(c);
+				}
+				opBytes.first = byte;
+				occupied++;
+			} else {
+				// The audacity of putting two plus one operator byte must be studied.
+				if (occupied == 2) {
+					std::string op;
+					op.push_back(opBytes.first);
+					if (occupied > 1) {
+						op.push_back(opBytes.second);
+					}
+					blocks.push_back(op);
+					occupied = false;
+					std::string opNew;
+					opNew.push_back(byte);
+					// Insert cache if possible.
+					if (!cache.empty()) {
+						blocks.push_back(cache);
+						cache.clear();
+					}
+					blocks.push_back(opNew);
+					pos++;
 					continue;
 				}
-			}*/
-			cache.resize(cache.size());
+				if (_compatibleToSumBytes(byte, opBytes.first)) {
+					opBytes.second = byte;
+					occupied++;
+				} else {
+					// Push two keywords.
+					std::string s1;
+					std::string s2;
+					s1.push_back(opBytes.first);
+					s2.push_back(byte);
+					// do
+					blocks.push_back(s1);
+					if (!cache.empty()) {
+						blocks.push_back(cache);
+						cache.clear();
+					}
+					blocks.push_back(s2);
+					occupied = 0;
+					opBytes.first = 0;
+					opBytes.second = 0;
+				}
+			}
+			pos++;
+			continue;
+		} else {
+			if (occupied) {
+				// Push those bytes first.
+				std::string op;
+				op.push_back((char)opBytes.first);
+				if (occupied > 1) {
+					op.push_back((char)opBytes.second);
+				}
+				blocks.push_back(op);
+				occupied = false;
+			}
 			cache.push_back(byte);
 		}
-		_last_char = byte;
 		pos++;
 	}
 	if (!cache.empty()) {
 		blocks.push_back(cache); //Termination
 	}
 
-	// Only process for each lines in the file.
-	std::string _CACHE;
-	__LINES.push_back(std::vector<std::string>());
-	luaCurrentFileId = __LINES.size()-1;
-	for (uint8_t &k: data) {
-		if (k == '\n') {
-			__LINES[luaCurrentFileId].push_back(_CACHE);
-			_CACHE.clear();
-		} else {
-			_CACHE.resize(_CACHE.size() + sizeof(char));
-			_CACHE.append(std::string(sizeof(char), static_cast<char>(k)));
-		}
+	std::cout << "BUNDLED STRING INSTRUCTIONS: ";
+	for (const std::string &i: blocks) {
+		if (i == "\n")
+			std::cout << "<\\n> "; 
+		else
+			std::cout << "<" << i << "> ";
 	}
-	// Notice!
-	// Let's see if it are single line
-	if (__LINES[luaCurrentFileId].empty()) {
-		__LINES[luaCurrentFileId].push_back(_CACHE);
-	}
-	_CACHE.clear();
+	std::cout << std::endl;
 	
 	return blocks;
 }
 
+// A array type thing.
+// This must equal the order of _Lua_Lex_Keys
+static std::vector<std::string> KEYWORDS = {
+	"function",
+	"local",
+	"while",
+	"until",
+	"for",
+	"repeat",
+	"bool",
+	"integer",
+	"stringT",
+	"do", // Must be "then" too.
+	"end",
+	"and",
+	"else",
+	"elseif",
+	"or",
+	"if",
+	"then", // skipped.
+	"break",
+	"in",
+	"nil",
+	"not",
+	"return",
+	"true",
+	"false",
+	"\0", // Number should be controlled.
+	"\0", // String should return own key.
+	"\0", // Varname should return own key.
+	"\0",
+	"..",
+	"==", // Until second key
+	">=",
+	"<=",
+	"~=",
+	"...",
+	"\0", // Obsolete key.
+	"=",
+	".",
+	"++",
+	"--",
+	"+",
+	"-",
+	"*",
+	"/",
+	"^",
+	"%",
+	"{",
+	"}",
+	";", // Separator2
+	"[",
+	"\1", // Not coverable
+	"\1", // Not coverable
+	",", // Separator
+	"\1", // Not coverable
+	"\1", // Not coverable
+	"is",
+	"(",
+	")",
+	"\1", // Not coverable [58]
+	"thread",
+	"\n",
+	"\1", // Not coverable
+	">",
+	"<",
+	" ",
+	"nop",
+	"\1", // Not coverable
+	"]",
+	"\1", // Not coverable
+	"\1", // Not coverable
+	"\1", // Not coverable
+	"\1", // Not coverable
+	"\1", // Not coverable
+	"double",
+	"\0", // obsolete
+	"\1", // Not coverable
+	"\1", // Not coverable
+	"\1", // Not coverable
+	"\1", // Not coverable
+	"\1", // 79
+	"_CLUA@IGVARCHECK", // flag
+	"\1", // Not coverable
+	"_CLUA@CONSTTABLE", // flag
+	"_CLUA@OBJECTNAME", // flag
+	":",
+	"\"",
+};
 
+_Lua_Lex_Keys getKey(const std::string parameter) {
+	uint64_t pos = 1;
+	if (parameter == "then")
+		return _L_BlockStart;
+	for (const std::string &i: KEYWORDS) {
+		if (i == parameter) {
+			return static_cast<_Lua_Lex_Keys>(pos);
+		}
+		pos++;
+	}
+	return _L_UNKNOWN;
+}
+
+LuaLexFrame *_seekBackByteFromPos(std::vector<LuaLexFrame> &vct, uint64_t pos) {
+	LuaLexFrame *L = nullptr;
+	try {
+		L = &vct.at(pos);
+	} catch (std::out_of_range &e) {
+		return nullptr;
+	}
+	return L;
+}
+
+#include <deque>
+enum _parserClosureType {
+	COMMENT,
+	TABLE,
+	//Block,
+	PARENTHESES,
+	STRING,
+	STRING2,
+	NOTHING,
+};
+
+_parserClosureType getLatestClosure(std::deque<_parserClosureType> &c) {
+	if (c.size() == 0) {
+		return NOTHING;
+	}
+	return c.back();
+}
+
+bool _capableOfEndingAClosure(_Lua_Lex_Keys KEY, _parserClosureType CLOSURE) {
+	switch (KEY) {
+		case _L_NEWLINE: {
+			switch (CLOSURE) {
+				case COMMENT: {
+					return true;
+				}
+				default: {
+					return false;
+				}
+			}
+		}
+		default: {
+			return false;
+		}
+	}
+}
+
+void pushNewLLF(std::vector<LuaLexFrame> &vct, _Lua_Lex_Keys key) {
+	vct.push_back(LuaLexFrame(key));
+}
+
+void modifyNextKey(LuaLexFrame *key, LuaLexFrame &data) {
+	key->local = data.local;
+	key->ATTRIB = data.ATTRIB;
+	data = LuaLexFrame(_L_NONE);
+}
+
+// Debug info must be included.
+// So any data must be put like an array.
+std::string *getDebugLineNmakeNewOne(std::vector<std::string> data, uint64_t pos) {
+	std::string *str = new std::string();
+	while (true) {
+		std::string it;
+		try {
+			it = data.at(pos);
+		} catch (std::out_of_range &e) {
+			str->append(" <EOF>");
+			return str;
+		}
+		if (it == "\n") {
+			str->append(" <_L_NEWLINE>");
+			// Cut out.
+			return str;
+		} else {
+			str->append(it);
+		}
+	}
+}
+
+bool shouldntSaveKey(_Lua_Lex_Keys k) {
+	switch (k) {
+		case _L_STRING_CTRL: {return true;}
+		case _L_UNKNOWN: {return true;}
+		default: {return false;}
+	}
+}
+
+// _ParseSecondStage(std::vector<std::string> data)
+std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
+	// Check for data.
+	if (data.size() < 2) {
+		m_LuaErrorHandler->reportError(_lua_es_TooSmallEntry, 0, "");
+		m_LuaErrorHandler->setFatal(true);
+		return std::vector<LuaLexFrame>{ _L_NOP };
+	}
+	// Debug attribution.
+	std::string *debugAttrib = nullptr;
+	// Pos
+	uint64_t pos = 0;
+	// To return
+	std::vector<LuaLexFrame> vct;
+	// Cache
+	std::string cache0;
+	std::string cache1;
+	_Lua_Lex_Keys cache2;
+	// Attrib
+	LuaLexFrame data0;
+	// Closures
+	std::deque<_parserClosureType> closure;
+	// Continue
+	for (const std::string &key: data) {
+		// Get key version.
+		_Lua_Lex_Keys k = getKey(key);
+		if (_L_NONE == k) {
+			if (getLatestClosure(closure) == STRING) {
+				goto hyProc;
+			}
+			pos++;
+			continue;
+		}
+		if (cache2 == _L_NEWLINE) {
+			// Read this new line until \n nor EOF
+			debugAttrib = getDebugLineNmakeNewOne(data, pos);
+		}
+		if (closure.size() > 0) {
+			if (_capableOfEndingAClosure(k, closure.back())) {
+				closure.pop_back();
+				vct.push_back(LuaLexFrame(k));
+				pos++;
+				continue;
+			}
+		}
+		if (k == _L_DECREMENT_VARNUM) {
+			// Either a comment nor a [plusValue]-- (C syntax)
+			LuaLexFrame *v = _seekBackByteFromPos(vct, pos-1);
+			if (v == nullptr) {
+				// A comment <Starting of a script>
+				closure.push_back(COMMENT);
+			} else {
+				if (v->key == _L_VARNAME || v->key == _L_ON_TO_GO_END) {
+					// Strike that value.
+					v->ATTRIB = 0xFE; // minus, FF is incrementd.
+					pos++;
+					continue;
+				} else {
+					closure.push_back(COMMENT);
+					pos++;
+					continue;
+				}
+			}
+		}
+		if (k == _L_INCREMENT_VARNUM) {
+			LuaLexFrame *v = _seekBackByteFromPos(vct, pos-1);
+			if (v) {
+				if (v->key == _L_VARNAME || v->key == _L_ON_TO_GO_END) {
+					v->ATTRIB = 0xFF; // minus, FF is incrementd.
+					pos++;
+					continue;
+				}
+			} else {
+				m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Usage of Increment<++>");
+				return std::vector<LuaLexFrame>{_L_NOP};
+			}
+		}
+		if (k == _L_UNKNOWN) {
+			if (closure.size() > 0) {
+				hyProc:
+				switch (closure.back()) {
+					case STRING: {
+						cache1.append(key);
+						break;
+					}
+					case STRING2: {
+						cache1.append(key);
+						break;
+					}
+					default: {
+						goto _upperPair;
+					}
+				}
+				pos++;
+				continue;
+			} else {
+				_upperPair:
+				// Should be a varname nor a number
+				std::pair<bool, bool> _P = _chars_is_numb(key);
+				if (_P.first) {
+					LuaLexFrame _N(_L_NUMBER);
+					_N._data = std::vector<uint8_t>(key.begin(), key.end());
+					_N.ATTRIB = _P.second;
+				} else {
+					LuaLexFrame buff(_L_VARNAME);
+					buff._data = std::vector<uint8_t>(key.begin(), key.end());
+					vct.push_back(buff);
+				}
+				pos++;
+				continue;
+			}
+		} else {
+			if (k == _L_ON_TO_GO_OBJECT) { // Only lexer should read this key. Compiler shouldn't.
+				k = _L_ON_TO_GO;
+				data0.ATTRIB = 0xFF;
+			}
+			if (!shouldntSaveKey(k)) {
+				pushNewLLF(vct, k);
+				modifyNextKey(&vct.back(), data0);
+				vct.back().debugSymbolLine = debugAttrib;
+			}
+			// Update closures and many more.
+			switch (k) {
+				case _L_STRING_CTRL: {
+					if (getLatestClosure(closure) == STRING) {
+						closure.pop_back();
+						// Save string.
+						LuaLexFrame k(_L_STRING);
+						k._data = std::vector<uint8_t>(cache1.begin(), cache1.end());
+						vct.push_back(k);
+					} else {
+						closure.push_back(STRING);
+					}
+					break;
+				}
+				case _L_RETURN: {
+					pushNewLLF(vct, _L_F_ARGS_START);
+					closure.push_back(PARENTHESES);
+					break;
+				}
+				case _L_LOCAL: {
+					data0.local = true;
+					break;
+				}
+				case _L_TABLE_START: {
+					closure.push_back(TABLE);
+					break;
+				}
+				case _L_DECLR: {
+					// Push extra.
+					pushNewLLF(vct, _L_F_ARGS_START);
+					closure.push_back(PARENTHESES);
+					break;
+				}
+				case _L_TABLE_END: {
+					_AGAIN__:
+					if (getLatestClosure(closure) == TABLE) {
+						closure.pop_back();
+					} else if (getLatestClosure(closure) == PARENTHESES) {
+						pushNewLLF(vct, _L_F_ARGS_END);
+						closure.pop_back();
+						goto _AGAIN__;
+					} else {
+						m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Unordered closures detected!");
+						return std::vector<LuaLexFrame>{_L_NOP};
+					}
+					break;
+				}
+				case _L_SEPARATOR: { //","
+					if (getLatestClosure(closure) == PARENTHESES) {
+						pushNewLLF(vct, _L_F_ARGS_END);
+						closure.pop_back();
+					}
+					break;
+				}
+				case _L_SEPARATOR2: { //";"
+					if (getLatestClosure(closure) == PARENTHESES) {
+						pushNewLLF(vct, _L_F_ARGS_END);
+						closure.pop_back();
+					}
+					break;
+				}
+				case _L_NEWLINE: {
+					if (getLatestClosure(closure) == PARENTHESES) {
+						pushNewLLF(vct, _L_F_ARGS_END);
+						closure.pop_back();
+					}
+					break;
+				}
+				default: {}
+			}
+		}
+		cache0 = key;
+		pos++;
+	}
+	// Resolve closures.
+	while (true) {
+		if (closure.size() > 0) {
+			const _parserClosureType i = closure.back();
+			switch (i) {
+				case TABLE: {
+					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Need to close { for table!");
+					return std::vector<LuaLexFrame>{_L_NOP};
+				}
+				case PARENTHESES: {
+					pushNewLLF(vct, _L_F_ARGS_END);
+					closure.pop_back();
+					break;
+				}
+				case COMMENT: {
+					// Nothing.
+					closure.pop_back();
+					break;
+				}
+				case STRING: {
+					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Need to close \" for string!");
+					return std::vector<LuaLexFrame>{_L_NOP};
+				}
+				case STRING2: {
+					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Need to close [[ for string!");
+					return std::vector<LuaLexFrame>{_L_NOP};
+				}
+				case NOTHING: {
+					// Why there's nothing?
+					closure.pop_back();
+					break;
+				}
+			}
+		} else {
+			break;
+		}
+	}
+	return vct;
+}
 
 
 std::vector<LuaLexFrame> LuaLex::ParserSecondStage(std::vector<std::string> data) {
@@ -249,797 +713,8 @@ std::vector<LuaLexFrame> LuaLex::ParserSecondStage(std::vector<std::string> data
 		m_LuaErrorHandler->setFatal(true);
 		return std::vector<LuaLexFrame>{ _L_NOP };
 	}
-	
-	std::vector<LuaLexFrame> blocks;
-	LuaLexFrame FRM_;
-	FRM_.key = _L_START;
-	blocks.push_back(FRM_);
-	//Just to complete keyword
-	auto search = [this] (std::vector<std::string> *blks, std::string key, bool &found, uint16_t jump) {
-		uint16_t jumps = 0;
-		for (std::string &str: *blks) {
-			if (str == key) {
-				jumps++;
-				if (jumps > jump) {
-					found = true;
-				}
-			}
-		}
-	};
-	// S T R I N G S
-	bool _on_string = false;
-	std::string cache;
-
-	
-	
-	// Statements
-	bool _on_comment = false;     // cmt
-	bool _on_comment_i = false;
-	bool _on_comment_st = false;  // \n
-	bool _on_comment_st2 = false; // --
-	bool _on_comment_st3 = false; // [[
-	bool _on_bidir_001	= false; // [] neither [[]] <variable dir/big string>
-	bool _on_bidir_002 = false; // Op to 001
-	bool _big_string = false;
-	bool _variable_decl_001 = false; // IF <name> + [.] = EXAMPLE = NameVar.[ACC]
-	bool _function_decl = false;
-	bool _local_decl = false;
-	bool _bool_decl = false;
-	bool _int_decl = false;
-	bool _str_decl = false;
-	bool _thr_decl = false;
-	bool _then_decl = false;
-	bool _decl_decl = false;
-	bool _decl_min = false;
-	bool _decl_max = false;
-	bool _equal_frm = false;
-	bool _minusthan = false;
-	bool _morethan = false;
-	bool _local_toclose = false; // Added multiple declarations in one line
-	bool _if = false;
-	bool _mat = false;
-	bool _else = false;
-	bool _elseif = false;
-	bool _end = false;
-	bool _LAST_Str = false;
-	uint32_t _declr_p0 = 0;
-	bool _for = false;
-	uint8_t _key = false;
-	LuaLexFrame CACHE_LEX;
-	LuaLexFrame *ptrToLastLexF = nullptr;
-	_Lua_Lex_Keys KY = _L_NONE;
-	bool _objControl = false;
-
-	uint32_t words_count = 0;
-	uint32_t wordpos = 0;
-
-	//BEGIN DEBUG_METHODS
-
-	auto show_code_ = [this, &data] (uint32_t wordscount) {
-		std::string _C;
-		// Start on the pos -7 (Enough to find a bug huh?) to 7, likely 14 positions revealed.
-		if (wordscount < 7)
-			wordscount = 7;
-		uint32_t _max = data.size();
-		if (_max < 7)
-			_max = data.size();
-		else
-			_max = 7;
-		uint16_t spaces_count = 0;
-		for (int i = wordscount-7; i <= _max; i++) {
-			if (data.size() == i)
-				break;
-			if (data[i] == " ") {
-				spaces_count++;
-				continue;
-			}
-			_C.append(std::string("["));
-			_C.append(std::to_string(i-spaces_count));
-			_C.append(std::string("]"));
-			_C.append(data[i]);
-			_C.append(" ");
-		}
-		return _C;
-	};
-
-	//END DEBUG_METHODS
-
-	_Lua_Lex_Keys _last_frame = _L_NIL;
-	uint32_t pos__ = 0;
-	std::string key;
-	LuaLexFrame _VAR(_L_VARNAME);
-	for (;;) { // [[ T H I S   I S   T H E    F U T U R E ]]
-		try {
-			key = data.at(pos__);
-		} catch (std::out_of_range &e) {
-			return blocks;
-		}
-		pos__++;
-		
-		std::pair<bool, bool> A_T_R = _chars_is_numb(key);
-		
-		
-		words_count++;
-		if ((key == " ") && !_big_string && !_on_string)
-			continue; // Ignore the space char, it's not used.
-		if (key == "\n") {
-			if (_declr_p0) {
-				LuaLexFrame _L(_L_F_ARGS_END);
-				blocks.push_back(_L);
-				_declr_p0 = false;
-			}
-			if (_local_toclose) {
-				LuaLexFrame _L(_L_F_ARGS_END);
-				blocks.push_back(_L);
-				_local_toclose = false;
-			}
-			_on_comment = false;
-			LuaLexFrame _NEWLINE(_L_NEWLINE);
-			blocks.push_back(_NEWLINE);
-			continue;
-		}
-			
-		// B I G   S T R I N G   && [[B I G]] C O M M E N T
-
-		if (key == "]") {
-			// Close
-			if (!_on_bidir_002) {
-				_on_bidir_002 = true;
-			} else {
-				// Double
-				if (_big_string) {
-					// A big string
-					// Close
-					_big_string = false;
-					LuaLexFrame _STR(_L_STRING);
-					_STR._data = std::vector<uint8_t>(cache.begin(), cache.end());
-					_STR.keystring = "]";
-					blocks.push_back(_STR);
-					cache.clear();
-				} else if (_on_comment_st3) {
-					_on_comment_st3 = false;
-				}
-			}
-			continue;
-		}
-		if (_on_bidir_002) {
-			goto _insertOnToGoEnd;
-			_JMP0:
-			_on_bidir_002 = false;
-		}
-		
-		if (_big_string) {
-			cache.append(key);
-			continue;
-		}
-		if (key == "[") {
-			if (_on_comment_i) {
-				if (!_on_comment_st3) { // Third mode comment, "[[ ]]"
-					if (_on_comment) {
-						_on_comment_st3 = true;
-						continue;
-					}
-				} else {
-					continue; //Skip this, as a comment
-				}
-			} else { // Bidir
-				if (!_on_comment) {
-					if (!_on_bidir_001) {
-						// It is a string neither a table dir, with hope; lol
-						_on_bidir_001 = true;
-						//_on_bidir_002 = true;
-						continue;
-					} else {
-						//if (_on_bidir_001) { //Big string
-							_on_bidir_001 = false;
-							_big_string = true;
-						//}
-						// Nothing.
-						continue;
-					}
-				}
-			}
-		} else { // Make sure if not _on_bidir_001 and last char was "[" then it should be an variable dir
-			// _on_bidir_001 == true so other char, then variable dir, insert an variable
-			if (_on_bidir_001) {
-				LuaLexFrame _ACC(_L_ON_TO_GO);
-				_ACC.keystring = "->";
-				_ACC.ATTRIB = 1;
-				blocks.push_back(_ACC);
-				_on_bidir_001 = false;
-			}
-		}
-		//_on_bidir_002 = false;
-		_on_comment_i = false; // Remove comment iterator
-		if (_on_comment && !_on_string) {
-			if (key == "\\") {
-				_on_comment_st = true;
-			} else if (key == "n") {
-				if (_on_comment_st && !_on_comment_st3) {
-					_on_comment = false;
-				}
-			}
-			continue;
-		} else {
-			if (key == "-" && !_on_string) {
-				try {
-					if (data.at(pos__) == "-") {
-						_on_comment_i = true; //Only one iteration
-						_on_comment = true;
-						_on_comment_st2 = false;
-						_on_comment_st = false;
-						continue;
-					}
-				} catch (std::out_of_range &e) {
-					return blocks;
-				}
-				
-			}
-		}
-		
-		// S T R I N G
-		if (_on_string) {
-			if (key == "\"" || key == "'") {
-				_on_string = false;
-				LuaLexFrame _STR(_L_STRING);
-				_STR._data = std::vector<uint8_t>(cache.begin(), cache.end());
-				_STR.keystring.append("\"");
-				_STR.keystring.append(cache);
-				_STR.keystring.append("\"");
-				blocks.push_back(_STR);
-				cache.clear();
-			} else {
-				cache.append(key);
-			}
-			continue;
-		} else {
-			if (key == "\"" || key == "'") {
-				_on_string = true;
-				_mat = true;
-				_LAST_Str = true;
-				goto _EQ_TERM;
-			}
-		}
-
-		// Flags
-		
-		if (_objControl) {
-			// Insert codename.
-			LuaLexFrame a(_L_OBJECTCODENAME);
-			a._data = std::vector<uint8_t>(key.begin(), key.end());
-			blocks.push_back(a);
-			_objControl = false;
-			goto _FLUSH;
-		}
-		
-		if (key == "_CLUA@OBJECTNAME") {
-			_objControl = !_objControl;
-			goto _FLUSH;
-		}
-		
-		if (key == "_CLUA@IGNOREVARIABLESCHECK_") {
-			LuaLexFrame _K(_L_FLAG_IGNORE_VARCHECK);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		
-		if (key == "_CLUA@ConstTable") {
-			LuaLexFrame _K(_L_CONSTTABLE);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		
-		// L O C A L
-
-		if (key == "local") {
-			if (_local_decl) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad naming found for word 'local': " + std::to_string(words_count) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			_local_decl = true;
-			LuaLexFrame _LCL(_L_LOCAL);
-			blocks.push_back(_LCL);
-			LuaLexFrame _L(_L_F_ARGS_START);
-			_L.local = true;
-			_local_toclose = true;
-			blocks.push_back(_L);
-			goto _FLUSH;
-		}
-
-		// F U N C T I O N
-
-		if (key == "function") {
-			if (_function_decl) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad naming found for word 'function': " + std::to_string(words_count) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			if (_local_toclose) {
-				// Pop that block!
-				_local_toclose = false;
-				blocks.pop_back();
-			}
-			LuaLexFrame _F(_L_FUNCTION);
-			blocks.push_back(_F);
-			_function_decl = true;
-			goto _FLUSH;
-		}
-
-		// IF/ELSE/ELSEIF/END
-
-		if (key == "if") { // Can be ran inside script or func
-			if (_elseif) {
-				m_LuaErrorHandler->reportWarning(_lua_es_BadSyntax, 0, std::string("elseif statement already present, no need for 'if': " + std::to_string(words_count) + "> " + show_code_(words_count)));
-				_elseif = false;
-				goto _FLUSH; // Skip this.
-			}
-			if (_if) {
-				m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("Bad naming found for word 'if': " + std::to_string(words_count) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			_if = true;
-			LuaLexFrame _IF(_L_IF);
-			blocks.push_back(_IF);
-			LuaLexFrame _CL(_L_F_ARGS_START);
-			blocks.push_back(_CL);
-			goto _FLUSH;
-		}
-		if (key == "for") { // Can be ran inside script or func
-			_for = true;
-			LuaLexFrame _F(_L_FOR);
-			blocks.push_back(_F);
-			LuaLexFrame _CL(_L_F_ARGS_START);
-			blocks.push_back(_CL);
-			goto _FLUSH;
-		}
-		if (key == "do") { // Can be ran inside script or func
-			LuaLexFrame _CL(_L_F_ARGS_END);
-			blocks.push_back(_CL);
-			if (!_for) {
-				LuaLexFrame _F(_L_BlockStart);
-				blocks.push_back(_F);
-			}
-			_for = false;
-			goto _FLUSH;
-		}
-		if (key == "else") {
-			if (_else || _elseif) {
-				m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, std::string("Bad naming found for word 'else': " + std::to_string(words_count) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			_else = true;
-			LuaLexFrame _ELSE(_L_ELSE);
-			blocks.push_back(_ELSE);
-			goto _FLUSH;
-		}
-		if (key == "elseif") {
-			if (_elseif || _else) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad naming found for word 'elseif': " + std::to_string(words_count) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			_elseif = true;
-			LuaLexFrame _ELSEIF(_L_ELSEIF);
-			blocks.push_back(_ELSEIF);
-			goto _FLUSH;
-		}
-		if (key == "end") {
-			/*if (_end || _if || _elseif || _else) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad naming found for word 'end': " + std::to_string(words_count) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}*/
-			_end = true;
-			LuaLexFrame _END(_L_END);
-			blocks.push_back(_END);
-			goto _FLUSH;
-		}
-		if (key == "then") {
-			if (_then_decl) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad naming found for word 'end': " + std::to_string(words_count) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			_if = false;
-			_then_decl = true;
-			LuaLexFrame _CL(_L_F_ARGS_END);
-			blocks.push_back(_CL);
-			//LuaLexFrame _THEN(_L_THEN);
-			//blocks.push_back(_THEN);
-			goto _FLUSH;
-		}
-
-		//BEGIN VAR TYPES
-		// Some addons
-		// B O O L
-		if ((key == "bool") || (key == "$10")) {
-			if (_bool_decl || _int_decl || _str_decl) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad value formatting for 'bool'" + std::string(reinterpret_cast<const char*>(words_count)) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			// We define variable as an bool value
-			//LuaLexFrame _X(_L_VARTYPE);
-			//_X.subkey = _L_BOOL;
-			//_X.keystring = "bool";
-			//blocks.push_back(_X); // Not this time.
-			//CACHE_LEX = _X;
-			//_bool_decl = true;
-			//blocks.push_back(_X);
-			KY = _L_BOOL;
-			goto _FLUSH;
-		}
-
-		// I N T
-		if (key == "double") {
-			if (_bool_decl || _int_decl || _str_decl) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad value formatting for 'double'" + std::string(reinterpret_cast<const char*>(words_count)) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			// We define variable as an bool value
-			KY = _L_DOUBLE;
-			//blocks.push_back(_X); // Not this time.
-			//CACHE_LEX = _X;
-			//_int_decl = true;
-			//blocks.push_back(_X);
-			goto _FLUSH;
-		}
-		
-		// I N T
-		if (key == "int") {
-			if (_bool_decl || _int_decl || _str_decl) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad value formatting for 'int'" + std::string(reinterpret_cast<const char*>(words_count)) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			// We define variable as an bool value
-			KY = _L_INT;
-			goto _FLUSH;
-		}
-
-		// S T R I N G
-		if (key == "stringT") {
-			if (_bool_decl || _int_decl || _str_decl) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad value formatting for 'string'" + std::string(reinterpret_cast<const char*>(words_count)) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			// We define variable as an bool value
-			KY = _L_STRING2;
-			goto _FLUSH;
-		}
-		// T H R E A D
-		if (key == "thread") {
-			if (_bool_decl || _int_decl || _str_decl) {
-				m_LuaErrorHandler->reportError(_lua_es_BadVariableNamingMethod, 0, std::string("Bad value formatting for 'thread'" + std::string(reinterpret_cast<const char*>(words_count)) + "> " + show_code_(words_count)));
-				m_LuaErrorHandler->setFatal(true);
-				return blocks;
-			}
-			// We define variable as an bool value
-			KY = _L_THREAD;
-			goto _FLUSH;
-		}
-		//END VAR TYPES
-
-		//
-		if (key == "nil") {
-			LuaLexFrame _K(_L_NIL);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		
-_EQ_TERM:
-		//std::cout << key.size() << " = " << key << std::endl;
-		if (key == "=") {
-			//LuaLexFrame _K(_L_DECLR);
-			//blocks.push_back(_K);
-			if (_decl_min) {
-				LuaLexFrame _K(_L_EQUALS_OR_MINUS);
-				blocks.push_back(_K);
-				_decl_min = false;
-			}
-			if (_decl_max) {
-				LuaLexFrame _K(_L_EQUALS_OR_MORE);
-				blocks.push_back(_K);
-				_decl_max = false;
-			}
-			if (!_decl_decl) {
-				_decl_decl = true;
-			} else {
-				LuaLexFrame _K(_L_EQUALS);
-				blocks.push_back(_K);
-				_decl_decl = false;
-			}
-			goto _FLUSH;
-		} else if (_decl_decl) {
-			_decl_decl = false;
-			ptrToLastLexF->declr = true;
-			if (_local_toclose) {
-				LuaLexFrame _L(_L_F_ARGS_END);
-				blocks.push_back(_L);
-			}
-			LuaLexFrame _K(_L_DECLR);
-			blocks.push_back(_K);
-			_local_decl = false;
-			if (!_for) {
-				_declr_p0++;
-				LuaLexFrame _L(_L_F_ARGS_START);
-				blocks.push_back(_L);
-			}
-			if (!_mat)
-				goto _GARGABE;
-		}
-		if (key == "<") {
-			if (!_decl_min)
-				_decl_min = true;
-			_minusthan = true;
-			goto _FLUSH;
-		} else {
-			if (key != "=" && _minusthan) {
-				_minusthan = false;
-				LuaLexFrame _K(_L_MINUSTHAN);
-				blocks.push_back(_K);
-				goto _FLUSH;
-			}
-		}
-		if (key == ">") {
-			if (!_decl_max)
-				_decl_max = true;
-			_morethan = true;
-			goto _FLUSH;
-		} else {
-			if (key != "=" && _morethan) {
-				_morethan = false;
-				LuaLexFrame _K(_L_MORETHAN);
-				blocks.push_back(_K);
-				goto _FLUSH;
-			}
-		}
-		if (_LAST_Str)
-			goto _END;
-
-_GARGABE:
-		// Some logic, always not checked bcuz i'm lazy.
-		if (key == "not") {
-			LuaLexFrame _K(_L_NOT);
-			_K.keystring = key;
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "and") {
-			LuaLexFrame _K(_L_AND);
-			_K.keystring = key;
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "or") {
-			LuaLexFrame _K(_L_OR);
-			_K.keystring = key;
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "return") {
-			LuaLexFrame _K(_L_RETURN);
-			blocks.push_back(_K);
-			LuaLexFrame _K2(_L_F_ARGS_START);
-			blocks.push_back(_K2);
-			_local_toclose = true;
-			goto _FLUSH;
-		}
-		
-		// Bools
-		if (key == "true") {
-			LuaLexFrame _K(_L_TRUE);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "false") {
-			LuaLexFrame _K(_L_FALSE);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		
-		// Syntax
-		if (key == "+") {
-			LuaLexFrame _K(_L_SYNTAX_SUM);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "-") {
-			LuaLexFrame _K(_L_SYNTAX_DEC);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "/") {
-			LuaLexFrame _K(_L_SYNTAX_DIV);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "*") {
-			LuaLexFrame _K(_L_SYNTAX_MUL);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "^") {
-			LuaLexFrame _K(_L_SYNTAX_EXP);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		
-		// F l u s h
-		
-		if (key == "(") {
-			LuaLexFrame _K(_L_F_ARGS_START);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == ")") {
-			//LuaLexFrame _E(_L_SEPARATOR);
-			//blocks.push_back(_E);
-			LuaLexFrame _K(_L_F_ARGS_END);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == ";") {
-			if (_declr_p0) {
-				LuaLexFrame _L(_L_F_ARGS_END);
-				blocks.push_back(_L);
-				_declr_p0--;
-			}
-			LuaLexFrame _K(_L_SEPARATOR);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "{") {
-			LuaLexFrame _K(_L_TABLE_START);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "}") {
-			if (_declr_p0) {
-				LuaLexFrame _L(_L_F_ARGS_END);
-				blocks.push_back(_L);
-				_declr_p0--;
-			}
-			LuaLexFrame _K(_L_TABLE_END);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == ",") {
-			if (_declr_p0) {
-				LuaLexFrame _L(_L_F_ARGS_END);
-				blocks.push_back(_L);
-				_declr_p0--;
-			}
-			LuaLexFrame _K(_L_SEPARATOR);
-			_K.ATTRIB = 1;
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "]") {
-			_insertOnToGoEnd:
-			LuaLexFrame _K(_L_ON_TO_GO_END);
-			blocks.push_back(_K);
-			if (_on_bidir_002)
-				goto _JMP0;
-			goto _FLUSH;
-		}
-		if (key == "..") {
-			LuaLexFrame _K(_L_CONCAT);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		if (key == "...") {
-			LuaLexFrame _K(_L_MULTIPLEARGS);
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		/*if (key == "." && data.size() <= (pos__+1) && data.at(pos__+1) == ".") {
-			LuaLexFrame _K(_L_CONCAT);
-			blocks.push_back(_K);
-			pos__++;
-			goto _FLUSH;
-		}*/
-		
-		if (key == ":") {
-			LuaLexFrame _K(_L_ON_TO_GO);
-			_K.ATTRIB = 0xFF;
-			blocks.push_back(_K);
-			goto _FLUSH;
-		}
-		
-
-		if (!A_T_R.first && key.find('.') != std::string::npos) { //Access variable. [Table]
-			// Get the keywords
-			std::string _CACHE;
-			std::vector<std::string> _C_CACHE;
-			char buff = 0;
-			uint8_t pos= 0;
-			for (char &c: key) {
-				if (buff != '.') {
-					_CACHE.push_back(c);
-				} else {
-					if (!_CACHE.empty())
-						_C_CACHE.push_back(_CACHE);
-					_CACHE.clear();
-					//Put the . in chain
-					_C_CACHE.push_back(std::to_string(c));
-					
-				}
-			}
-			if (!_CACHE.empty())
-				_C_CACHE.push_back(_CACHE);
-			_CACHE.clear();
-			// Pair.
-			for (std::string &d :_C_CACHE) {
-				if (d == ".") {
-					_VAR.key = _L_ON_TO_GO;
-					_VAR.keystring = ".";
-					_VAR._data = std::vector<uint8_t>();
-					_VAR.ATTRIB = 0;
-					blocks.push_back(_VAR);
-				} else {
-					_VAR.header = "";
-					_VAR.key = _L_VARNAME;
-					_VAR.keystring = d;
-					_VAR._data = std::vector<uint8_t>(d.begin(), d.end());
-					blocks.push_back(_VAR);
-				}
-			}
-			goto _FLUSH;
-		}
-		if (A_T_R.first) {
-			LuaLexFrame _STR(_L_NUMBER);
-			_STR.ATTRIB = A_T_R.second;
-			_STR._data = std::vector<uint8_t>(key.begin(), key.end());
-			_STR.keystring = key;
-			blocks.push_back(_STR);
-			goto _FLUSH;
-		}
-		_VAR.header = "Varname";
-		_VAR.key = _L_VARNAME;
-		_VAR._data = std::vector<uint8_t>(key.begin(), key.end());
-		_VAR.keystring = key;
-		_VAR.subkey = KY;
-		_VAR.local = _local_decl;
-		
-		KY = _L_NONE;
-		blocks.push_back(_VAR);
-		ptrToLastLexF = &blocks.at(blocks.size()-1);
-		//std::cout << data[words_count] << std::endl; //After sum
-_FLUSH:
-//		if (key != "local")
-//			_local_decl = false;
-		if (key != "if")
-			_if = false;
-		if (key != "else")
-			_else = false;
-		if (key != "function")
-			_function_decl = false;
-		_mat = false;
-		_on_comment_st2 = false;
-
-
-_END:
-		//Nothing.
-		
-		_VAR = LuaLexFrame();
-		_LAST_Str = false;
-		
-		continue;
-	}
-	LuaLexFrame _QUOTE;
-	if (_declr_p0)
-		_QUOTE.key = _L_F_ARGS_END;
-	LuaLexFrame _EOF;
-	_EOF.key = _L_EOF;
-	blocks.push_back(_QUOTE);
-	blocks.push_back(_EOF);
-	return blocks;
+	// Obsolete code out.
+	return _ParseSecondStage(data);
 }
 
 std::string LuaLex::dumpInfo(std::vector<LuaLexFrame> S) {
@@ -1057,6 +732,7 @@ std::string LuaLex::dumpInfo(std::vector<LuaLexFrame> S) {
 	}
 	return _s;
 }
+
 
 
 

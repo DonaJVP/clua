@@ -397,8 +397,8 @@ enum _Lua_Lex_Keys {					// Lua Default	|	Addon				| Usable code for scripting |
 	_L_SYNTAX_PER			=	45, // Addon: 45% (Divide 45 with 100 for 0.45)
 	_L_TABLE_START			=	46, // {
 	_L_TABLE_END			=	47, // }
-	//_L_INDEX_START			=	48, // [
-	//_L_INDEX_END			=	49, // ]
+	_L_SEPARATOR2			=	48, // ;
+	_L_ON_TO_GO_P			=	49, // [ // Cover
 	_L_CALL					=	50, // *
 	_L_LABEL				=	51,
 	_L_SEPARATOR			=	52,
@@ -434,6 +434,8 @@ enum _Lua_Lex_Keys {					// Lua Default	|	Addon				| Usable code for scripting |
 	// Some preconfigured keys
 	_L_CONSTTABLE			=	82,
 	_L_OBJECTCODENAME		=	83,
+	_L_ON_TO_GO_OBJECT		=	84,
+	_L_STRING_CTRL			=	85,
 };
 
 extern const std::string _LuaKeysString[85];
@@ -468,6 +470,7 @@ struct LuaLexFrame {
 	bool multipleway = false;
 	lua_AddrPath *addr = nullptr; // Same as the old EXPR_BRKT
 	// Block part (Verify variables)
+	std::string *debugSymbolLine = nullptr;
 	std::vector<__lua_blk_ver_frmPlusType> _TOVERIFYBLOCK_;
 };
 

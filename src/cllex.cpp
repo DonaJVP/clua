@@ -270,14 +270,14 @@ std::vector<std::string> LuaLex::ParserFirstStage(std::vector<uint8_t> data) {
 		blocks.push_back(cache); //Termination
 	}
 
-	std::cout << "BUNDLED STRING INSTRUCTIONS: ";
+	/*std::cout << "BUNDLED STRING INSTRUCTIONS: ";
 	for (const std::string &i: blocks) {
 		if (i == "\n")
 			std::cout << "<\\n> "; 
 		else
 			std::cout << "<" << i << "> ";
 	}
-	std::cout << std::endl;
+	std::cout << std::endl;*/
 	
 	return blocks;
 }
@@ -575,9 +575,12 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 					LuaLexFrame _N(_L_NUMBER);
 					_N._data = std::vector<uint8_t>(key.begin(), key.end());
 					_N.ATTRIB = _P.second;
+					_N.debugSymbolLine = debugAttrib;
+					vct.push_back(_N);
 				} else {
 					LuaLexFrame buff(_L_VARNAME);
 					buff._data = std::vector<uint8_t>(key.begin(), key.end());
+					buff.debugSymbolLine = debugAttrib;
 					vct.push_back(buff);
 				}
 				pos++;

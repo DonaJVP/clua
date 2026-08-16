@@ -723,16 +723,29 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 					break;
 				}
 				case _L_SEPARATOR: { //","
-					if (getLatestClosure(closure) == PARENTHESES) {
-						pushNewLLF(vct, _L_F_ARGS_END);
-						pushNewLLF(vct, k);
-						closure.pop_back();
-					} else {
-						if (getLatestClosure(closure) != FPARENTHESES) {
+					if (closure.size() == 0) {
+						m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Unexpected ','");
+						return std::vector<LuaLexFrame>{_L_NOP};
+					}
+						
+					switch (closure.back()) {
+						case PARENTHESES: {
+							pushNewLLF(vct, _L_F_ARGS_END);
+							pushNewLLF(vct, k);
+							closure.pop_back();
+							break;
+						}
+						case TABLE: {
+							pushNewLLF(vct, k);
+							break;
+						}
+						case FPARENTHESES: {
+							pushNewLLF(vct, k);
+							break;
+						}
+						default: {
 							m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Unexpected ','");
 							return std::vector<LuaLexFrame>{_L_NOP};
-						} else {
-							pushNewLLF(vct, k);
 						}
 					}
 					break;

@@ -242,6 +242,7 @@ void _ASM__getFromTableIndex(uint8_t mode, x86::Gp baseTable0, uint64_t baseTabl
         a->jae(_of);
         a->mov(x86::r11, x86::qword_ptr(baseTable0, offsetof(lua_Table, array)));
         a->mov(x86::r10, 0x8);
+        a->movzx(x86::rax, regCounter);
         a->mul(x86::r10);
         if (!getPtr)
             a->mov(ret, x86::qword_ptr(x86::r11, x86::rax));
@@ -1088,8 +1089,14 @@ std::pair<bool, uint8_t> _CPP__emittedAnyOpcode(_Lua_Lex_Keys c) {
     return {false, 0};
 }
 
-void _ASM_crashINSTR(lua_ErrSignals signal) {
-    m_LuaErrorHandler->reportError(signal, 0, "Internal error.");
+void _ASMH__CRH(lua_ErrSignals signal, uint64_t symDlog) {
+    m_LuaErrorHandler->reportError(signal, symDlog, "");
+}
+
+void _ASM_crashINSTR(lua_ErrSignals signal, uint64_t symDlog = 0) {
+    a->mov(x86::rdi, signal);
+    a->mov(x86::rsi, symDlog);
+    a->call((uint64_t)_ASMH__CRH);
 }
 
 //x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD = false);
@@ -1128,7 +1135,7 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                     gotFirst = true;
                 } else {
                     if (!continuity) {
-                        m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Expected '.' to continue table searching but found nothing.");
+                        m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)actual->debugSymbolLine, "Expected '.' to continue table searching but found nothing.");
                         _ASM__insertNull(ret);
                         goto _RET;
                     } else {
@@ -1150,6 +1157,9 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                             _ASMH__rs_searchInTable(act, std::pair<bool, std::pair<x86::Gp, TString*>>(false, std::pair<x86::Gp, TString*>(x86::noReg, (TString*)actual->a)), act, false);
                             a->jmp(_f1);
                             a->bind(_f);
+                            //a->mov(x86::rdi, _lua_es_UnknownDataIdx);
+                            //a->mov(x86::rsi, (uint64_t)actual->debugSymbolLine);
+                            //a->call((uint64_t)_ASM_crashINSTR);
                             _ASM_crashINSTR(_lua_es_UnknownDataIdx);
                             a->mov(act, 0);
                             a->bind(_f1);

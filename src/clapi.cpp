@@ -181,8 +181,36 @@ bool LuaLex::areNumber(uint8_t data) {
 #define cstr __cache2.clear();
 #include <sstream>
 
+// Improve line errors/warnings
+std::vector<std::string> _starter00 {
+	"Not a function",
+	"Value is nil",
+	"Not correct",
+	"Arguments",
+	"Bad string",
+	"Unknown",
+		"Unknown data",
+	"Invalid usage",
+	"Bad syntax",
+	"Bad variable name",
+	"Not a table",
+	"Invalid type",
+	"Too few instructions set",
+		"Future crash at runtime",
+	"Bad typing",
+	"Not a integer",
+	"Not a string",
+	"Unknown error",
+	"Illegal instruction",
+};
 
-// This piece of shit fills you with determination
+const std::string getLineError(lua_ErrSignals sign) {
+	try {
+		return _starter00.at(sign);
+	} catch (std::out_of_range &e) {
+		return std::string("Internal Error");
+	}
+}
 
 // ERRORS REPORTER
 void LuaErrorHandler::reportError(const lua_ErrSignals signal, const size_t funcid, std::string reason) {
@@ -190,105 +218,23 @@ void LuaErrorHandler::reportError(const lua_ErrSignals signal, const size_t func
 	if (!m_pipe->nomutex) {
 		m_pipe->mtx.lock();
 	}
-	if (funcid != 9898986555 || funcid != 0) { //Please be uniqueeee
-		switch (signal) {
-			case (_lua_es_NonFunction): {
-				std::string err = "[ERROR] Not a function: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			};
-			case (_lua_es_ValueIsNil): {
-				std::string err = "[ERROR] Value are nil: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			};
-			case (_lua_es_NotCorrect): {
-				std::string err = "[ERROR] Not a correct way to do: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			};
-			case (_lua_es_ArgIsProblem): {
-				std::string err = "[ERROR] Verify arguments: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			};
-			case (_lua_es_BadString): {
-				std::string err = "[ERROR] Bad string: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			};
-			case (_lua_es_WhatTheHell): {
-				std::string err = "[ERROR] ... what?: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			};
-			case (_lua_es_InvalidUsage): {
-				std::string err = "[ERROR] Invalid usage: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			};
-			case (_lua_es_BadSyntax): {
-				std::string err = "[ERROR] Syntax error!: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			};
-			case (_lua_es_BadVariableNamingMethod): {
-				std::string err = "[ERROR] Bad naming: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			};
-			case (_lua_es_NotTable): {
-				std::string err = "[ERROR] Not a table: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			}
-			case (_lua_es_InvalidType): {
-				std::string err = "[ERROR] Invalid type: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			}
-			case (_lua_es_TooSmallEntry): {
-				std::string err = "[ERROR] Invalid code.";
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			}
-			//Warning. Ignore.
-			case (_lua_es_UnknownDataIdx): {
-				break;
-			};
-			default: {
-				std::string err = "[ERROR] <No exec code>: " + reason;
-				m_pipe->fatal = false;
-				m_pipe->reason = err;
-				m_pipe->err = true;
-				break;
-			}
-		}
+	
+	std::string ErrString = "[ERROR] ";
+	
+	ErrString.append(getLineError(signal));
+	ErrString.append(": ");
+	
+	if (funcid != 0) {
+		ErrString.append(" At line: ");
+		ErrString.append(((std::string*)funcid)->c_str());
+		ErrString.append(": ");
 	}
+	
+	ErrString.append(reason);
+	
+	m_pipe->reason = ErrString;
+	m_pipe->err = true;
+	
 	std::cout << "\033[3;31mCOMPILATION ERR: " << m_pipe->reason << "\033[0m" << std::endl;
 	//__asm__("ud2");
 	if (!m_pipe->nomutex) {

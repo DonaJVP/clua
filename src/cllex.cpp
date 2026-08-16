@@ -278,14 +278,14 @@ std::vector<std::string> LuaLex::ParserFirstStage(std::vector<uint8_t> data) {
 		blocks.push_back(cache); //Termination
 	}
 
-	/*std::cout << "BUNDLED STRING INSTRUCTIONS: ";
+	std::cout << "BUNDLED STRING INSTRUCTIONS: ";
 	for (const std::string &i: blocks) {
 		if (i == "\n")
 			std::cout << "<\\n> "; 
 		else
 			std::cout << "<" << i << "> ";
 	}
-	std::cout << std::endl;*/
+	std::cout << std::endl;
 	
 	return blocks;
 }
@@ -481,6 +481,7 @@ bool shouldntSaveKey(_Lua_Lex_Keys k) {
 		case _L_OBJECTCODENAME: {return true;}
 		case _L_BlockStart: {return true;}
 		case _L_SEPARATOR: {return true;}
+		case _L_TABLE_END: {return true;}
 		default: {return false;}
 	}
 }
@@ -711,6 +712,7 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 				case _L_TABLE_END: {
 					_AGAIN__:
 					if (getLatestClosure(closure) == TABLE) {
+						pushNewLLF(vct, k);
 						closure.pop_back();
 					} else if (getLatestClosure(closure) == PARENTHESES) {
 						pushNewLLF(vct, _L_F_ARGS_END);
@@ -774,7 +776,7 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 	// Resolve closures.
 	while (true) {
 		if (closure.size() > 0) {
-			const _parserClosureType i = closure.back();
+			const _parserClosureType i = closure.front();
 			switch (i) {
 				case TABLE: {
 					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Need to close { for table!");
@@ -782,12 +784,12 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 				}
 				case PARENTHESES: {
 					pushNewLLF(vct, _L_F_ARGS_END);
-					closure.pop_back();
+					closure.pop_front();
 					break;
 				}
 				case COMMENT: {
 					// Nothing.
-					closure.pop_back();
+					closure.pop_front();
 					break;
 				}
 				case FPARENTHESES: {
@@ -808,7 +810,7 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 				}
 				case NOTHING: {
 					// Why there's nothing?
-					closure.pop_back();
+					closure.pop_front();
 					break;
 				}
 			}

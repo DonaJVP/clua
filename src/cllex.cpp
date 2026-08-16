@@ -596,6 +596,19 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 				data0.ATTRIB = 1;
 				closure.push_back(INDEX);
 			}
+			// Either string or comment, should not push special keys.
+			if (getLatestClosure(closure) == STRING || getLatestClosure(closure) == COMMENT) {
+				if (k != _L_STRING_CTRL) {
+					cache1.append(key);
+					pos++;
+					continue;
+				} else {
+					if (getLatestClosure(closure) == COMMENT) {
+						pos++;
+						continue;
+					}
+				}
+			}
 			if (!shouldntSaveKey(k)) {
 				pushNewLLF(vct, k);
 				modifyNextKey(&vct.back(), data0);

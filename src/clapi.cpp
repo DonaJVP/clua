@@ -235,7 +235,6 @@ void LuaErrorHandler::reportError(const lua_ErrSignals signal, const size_t func
 	m_pipe->reason = ErrString;
 	m_pipe->err = true;
 	
-	std::cout << "\033[3;31mCOMPILATION ERR: " << m_pipe->reason << "\033[0m" << std::endl;
 	//__asm__("ud2");
 	if (!m_pipe->nomutex) {
 		m_pipe->mtx.unlock();

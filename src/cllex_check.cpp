@@ -87,7 +87,7 @@ LuaLexFrame makeSingleExprP(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
                 *pos = *pos + 1;
                 LuaLexFrame _F = makeSingleExprP(keys, pos);
                 if (contents.at(level).size() > 1) {
-                    LuaLexFrame _C = std::move(contents.at(level).at(*pos));
+                    LuaLexFrame _C = std::move(contents.at(level).at(contents.at(level).size()-1));
                     if (_C.key == _L_PATH) {
                         // Erase that key and then push new.
                         contents.at(level).pop_back();

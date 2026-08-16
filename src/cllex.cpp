@@ -134,6 +134,14 @@ bool _compatibleToSumBytes(uint8_t fOp, uint8_t sOp) {
 			}
 			break;
 		}
+		case 0x2E: {
+			if (sOp != fOp) {
+				return false;
+			} else {
+				return true;
+			}
+			break;
+		}
 		case 0x2B: {
 			if (sOp != fOp) {
 				return false;
@@ -404,6 +412,8 @@ enum _parserClosureType {
 	STRING,
 	STRING2,
 	INDEX,
+	OBJCONTROLNAME,
+	FPARENTHESES,
 	NOTHING,
 };
 
@@ -468,6 +478,9 @@ bool shouldntSaveKey(_Lua_Lex_Keys k) {
 	switch (k) {
 		case _L_STRING_CTRL: {return true;}
 		case _L_UNKNOWN: {return true;}
+		case _L_OBJECTCODENAME: {return true;}
+		case _L_BlockStart: {return true;}
+		case _L_SEPARATOR: {return true;}
 		default: {return false;}
 	}
 }
@@ -501,6 +514,16 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 		if (_L_NONE == k) {
 			if (getLatestClosure(closure) == STRING) {
 				goto hyProc;
+			} else if (getLatestClosure(closure) == OBJCONTROLNAME) {
+				if (cache1.empty()) {
+					pos++;
+					continue;
+				}
+				LuaLexFrame OBJC(_L_OBJECTCODENAME);
+				OBJC._data = std::vector<uint8_t>(cache1.begin(), cache1.end());
+				vct.push_back(OBJC);
+				cache1.clear();
+				closure.pop_back();
 			}
 			pos++;
 			continue;
@@ -561,6 +584,10 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 						cache1.append(key);
 						break;
 					}
+					case OBJCONTROLNAME: {
+						cache1.append(key);
+						break;
+					}
 					default: {
 						goto _upperPair;
 					}
@@ -616,6 +643,28 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 			}
 			// Update closures and many more.
 			switch (k) {
+				case _L_BlockStart: {
+					if (getLatestClosure(closure) == FPARENTHESES) {
+						pushNewLLF(vct, _L_F_ARGS_END);
+						pushNewLLF(vct, k);
+						closure.pop_back();
+					} else {
+						pushNewLLF(vct, k);
+					}
+					break;
+				}
+				case _L_FOR: {
+					// Insert _L_F_ARGS_START
+					pushNewLLF(vct, _L_F_ARGS_START);
+					closure.push_back(FPARENTHESES);
+					break;
+				}
+				case _L_OBJECTCODENAME: {
+					//OBJCONTROLNAME
+					closure.push_back(OBJCONTROLNAME);
+					cache1.clear();
+					break;
+				}
 				case _L_ON_TO_GO_END: {
 					if (getLatestClosure(closure) == INDEX) {
 						closure.pop_back();
@@ -651,6 +700,9 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 					break;
 				}
 				case _L_DECLR: {
+					if (getLatestClosure(closure) == FPARENTHESES) {
+						break;
+					}
 					// Push extra.
 					pushNewLLF(vct, _L_F_ARGS_START);
 					closure.push_back(PARENTHESES);
@@ -673,7 +725,15 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 				case _L_SEPARATOR: { //","
 					if (getLatestClosure(closure) == PARENTHESES) {
 						pushNewLLF(vct, _L_F_ARGS_END);
+						pushNewLLF(vct, k);
 						closure.pop_back();
+					} else {
+						if (getLatestClosure(closure) != FPARENTHESES) {
+							m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Unexpected ','");
+							return std::vector<LuaLexFrame>{_L_NOP};
+						} else {
+							pushNewLLF(vct, k);
+						}
 					}
 					break;
 				}
@@ -693,6 +753,7 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 				}
 				default: {}
 			}
+			
 		}
 		cache0 = key;
 		pos++;
@@ -716,12 +777,20 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 					closure.pop_back();
 					break;
 				}
+				case FPARENTHESES: {
+					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "'do' expected somewhere!");
+					return std::vector<LuaLexFrame>{_L_NOP};
+				}
 				case STRING: {
 					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Need to close \" for string!");
 					return std::vector<LuaLexFrame>{_L_NOP};
 				}
 				case STRING2: {
 					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Need to close [[ for string!");
+					return std::vector<LuaLexFrame>{_L_NOP};
+				}
+				case OBJCONTROLNAME: {
+					m_LuaErrorHandler->reportError(_lua_es_BadSyntax, (uint64_t)debugAttrib, "Internal error handling object control name");
 					return std::vector<LuaLexFrame>{_L_NOP};
 				}
 				case NOTHING: {

@@ -2055,7 +2055,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                             } else {
                                 if (startPointReg != x86::noReg) {
                                     if (startPointReg != x86::rdi) {
-                                        if (startPointReg.id() > 11) {
+                                        if (startPointReg.id() < 12) {
                                             a.mov(x86::r11, 0x0000FFFFFFFFFFFFULL);
                                             a.and_(startPointReg, x86::r11);
                                         } else {
@@ -2063,7 +2063,8 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                                             a.mov(x86::rdi, static_cast<uint64_t>(_hyperValue__startpoint));
                                             a.mov(startPointReg, x86::qword_ptr(x86::rdi));
                                         }
-                                        a.mov(register_, startPointReg);
+                                        if (register_ != startPointReg)
+                                            a.mov(register_, startPointReg);
                                     } else {
                                         a.mov(register_, (uint64_t)_hyperValue__startpoint);
                                     }
@@ -2078,7 +2079,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         } else {
                             if (startPointReg != x86::noReg) {
                                 if (startPointReg != x86::rdi) {
-                                    if (startPointReg.id() > 11) {
+                                    if (startPointReg.id() < 12) {
                                         a.mov(x86::r11, 0x0000FFFFFFFFFFFFULL);
                                         a.and_(startPointReg, x86::r11);
                                     } else {

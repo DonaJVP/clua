@@ -640,6 +640,7 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 			if (!shouldntSaveKey(k)) {
 				pushNewLLF(vct, k);
 				modifyNextKey(&vct.back(), data0);
+				data0.ATTRIB = 0;
 				vct.back().debugSymbolLine = debugAttrib;
 			}
 			// Update closures and many more.

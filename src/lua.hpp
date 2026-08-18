@@ -116,7 +116,7 @@ struct Node {
 	TString *key = nullptr;
 	Values val = 0;
 	Node *next = 0;
-	uint64_t trsh; // Complete 32bytes
+	uint64_t f;
 };
 
 // array, asize, nodes, hsize, metatable, 0, 1, hmask

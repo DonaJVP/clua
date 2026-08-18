@@ -330,6 +330,7 @@ int main(int argc, char* argv[]) {
 	m_General->nodes = (Node*)malloc(0xFFFF*sizeof(Node));//new Node[0xFFFF];
 	memset((void*)m_General->nodes, 0, 0xFFFF*sizeof(Node));
 	m_General->hmask = 0xFFFF;
+	m_General->hsize = m_General->hmask;
 	m_LuaErrorHandler = leh;
 	std::cout << "Initializing libraries" << std::endl;
 	LIBC__InitializeStreamLibrary(m_General);

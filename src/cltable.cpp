@@ -74,14 +74,17 @@ uint32_t murmur3_32(const void* key, size_t len, uint32_t seed) {
 
 Node *_F_ASM_MAKETABLENREHASH(lua_Table *_T, uint32_t s_) {
     Node *T;
+    void *_nT = mmap(nullptr, s_*sizeof(Node), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    memset(_nT, 0, s_*sizeof(Node));
     T = new Node[s_]();
     Node *OLD = _T->nodes;
     _T->nodes = T;
-    for (uint32_t i = 0; i <= _T->hsize; i++) {
-        if (((uint64_t)&OLD[i]) != 0)
+    for (uint64_t i = 0; i <= _T->hsize; i++) {
+        if (OLD[i].key && OLD[i].val) {
             _F_ASM_NOTGUARANTEED_SETVALUE(_T, OLD[i].key, OLD[i].val);
+        }
     }
-    munmap(OLD, s_);
+    munmap(OLD, _T->hsize);
     _T->hsize = s_;
     return T;
 }
@@ -541,7 +544,7 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
     Table->asize = 0xFF; // 255bytes. 32slots of 8bytes
     Table->array = new Values[32];
     Table->hsize = 0xFFFF; // 65536bytes. 8192slots each Node*
-    Table->nodes = new Node[8192];
+    Table->nodes = new Node[2048];
     
     a->movabs(x86::r9, (uint64_t)Table);
     _HELPER__runHooksFor(x86::r9, _R_TABLE_POINTER);
@@ -639,8 +642,10 @@ std::pair<bool, lua_Table*> _LTABLE_HELPER__buildTable(std::vector<LuaLexFrame> 
     lua_Table *bTable = new lua_Table();
     bTable->asize = 0xFF; // 255bytes. 32slots of 8bytes
     bTable->array = new Values[32];
-    bTable->hsize = 0xFFFF; // 65536bytes. 8192slots each Node*
-    bTable->nodes = new Node[8192];
+    bTable->hsize = 0xFFF;
+    bTable->hmask = bTable->hsize;
+    bTable->nodes = new Node[0xFFF];//(Node*)malloc(0xFFFF*sizeof(Node));
+    memset(bTable->nodes, 0, sizeof(Node)*0xFFF);
     // HELPERS
     uint32_t pos = 0;
     LuaLexFrame *packet = nullptr;

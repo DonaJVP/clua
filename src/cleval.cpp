@@ -1,6 +1,7 @@
 #include "lua.hpp"
 #include "ltable.hpp"
 #include <csignal>
+#include <cstddef>
 #include <cstdint>
 #include <asmjit/core.h>
 #include <asmjit/x86.h>
@@ -427,6 +428,7 @@ extern "C" {
         );
     }
 }
+
 // Just for saving contents...
 // INSERT METALLIC MADNESS HERE
 void _ASMH__rs_searchInTable(x86::Gp tblPTR, std::pair<bool, std::pair<x86::Gp, TString*>> key, x86::Gp toGp, bool pointer) {
@@ -455,6 +457,8 @@ void _ASMH__rs_searchInTable(x86::Gp tblPTR, std::pair<bool, std::pair<x86::Gp, 
         qlog0._log2("#_LOAD_# for variable[");
     if (key.second.second != nullptr) {
         qlog0._log2(key.second.second->data, key.second.second->len);
+        qlog0._log2("; ");
+        qlog0._log2(std::to_string(key.second.second->IDX).c_str());
     } else {
         qlog0._log2("<register>");
     }
@@ -477,98 +481,61 @@ void _ASMH__rs_searchInTable(x86::Gp tblPTR, std::pair<bool, std::pair<x86::Gp, 
         a->mov(x86::r8, key.second.second->IDX);
     }
     
+    
+    //Adjustment.
+    //a->mov(x86::r11, x86::r8);
+    
     if (!pointer)
         a->mov(x86::rdi, x86::r8);
-    else
-        a->mov(x86::rdi, (uint64_t)key.second.second);
-    
+    else {
+        a->mov(x86::r10, (uint64_t)key.second.second);
+        a->mov(x86::rdi, x86::qword_ptr(x86::r10));
+    }
+        
+    _HELPER__runHooksFor(x86::r10, _R_CLUATYPE_UNTAGGED);
     _HELPER__runHooksFor(x86::r9, _R_CLUATYPE_UNTAGGED);
     
-    // idx = hash & mask
     a->and_(x86::r8, x86::qword_ptr(x86::r9, offsetof(lua_Table, hmask)));
-    // rsi = &nodes[idx]
     a->mov(x86::rsi, x86::qword_ptr(x86::r9, offsetof(lua_Table, nodes)));
-    
-    //a->xor_(x86::r10, x86::r10);
     a->shl(x86::r8, 5);
-    //a->add(x86::r8, x86::rsi);
-    a->lea(x86::r11, x86::qword_ptr(x86::rsi, x86::r8));
-    if (pointer)
-        a->mov(x86::r8, x86::qword_ptr(x86::rdi));
-    
-    // rdx = current node
-    a->mov(x86::rdx, x86::r11);
-    
+    //a->add(x86::rsi, x86::r8);
     a->bind(_loop);
-    
-    a->test(x86::rdx, x86::rdx);
+    a->mov(x86::r11, x86::qword_ptr(x86::rsi, x86::r8)); // r11 = nodes[r8]
+    a->test(x86::r11, x86::r11);
     a->jz(_nf);
-    
-    // rax = node->key
-    a->mov(x86::rax, x86::qword_ptr(x86::rdx));
-    a->test(x86::rax, x86::rax);
-    a->jz(_nf);
-    
-    if (!pointer)
-        a->cmp(x86::rdi, x86::qword_ptr(x86::rax));
-    else
-        a->cmp(x86::r8, x86::qword_ptr(x86::rax));
+    a->cmp(x86::rdi, x86::qword_ptr(x86::r11)); // (*(Tstring*)).key == rdi
     a->je(_f);
-    
     // next
-    a->mov(x86::rdx, x86::qword_ptr(x86::rdx, offsetof(Node, next)));
+    a->add(x86::r8, offsetof(Node, next));
+    a->mov(x86::rsi, x86::qword_ptr(x86::rsi, x86::r8));
+    a->test(x86::rsi, x86::rsi);
+    a->jz(_nf);
+    // Modify rsi to handle each other object.
+    a->xor_(x86::r8, x86::r8);
     a->jmp(_loop);
-    
-    // =========================
-    // NOT FOUND
-    // =========================
     a->bind(_nf);
     
     if (!pointer) {
         a->mov(toGp, 0);
         a->jmp(_end);
     } else {
-        // -------- INSERT --------
-        /*
-        // call alloc_node()
-        a->mov(x86::rax, (uint64_t)alloc_node);
-        a->call(x86::rax);
-        
-        
-        // rax = new node
-        // rdx = head (original bucket)
-        
-        // new->key = key
-        a->mov(x86::qword_ptr(x86::rax, offsetof(Node, key)), x86::rcx);
-        
-        // new->next = old head
-        a->mov(x86::qword_ptr(x86::rax, offsetof(Node, next)), x86::rsi);
-        
-        // write new head into table bucket
-        a->mov(x86::r10, x86::qword_ptr(x86::r9, offsetof(lua_Table, nodes)));
-        a->lea(x86::r10, x86::qword_ptr(x86::r10, x86::r8, sizeof(Node)));
-        a->mov(x86::qword_ptr(x86::r10), x86::rax);
-        
-        // return &new->val
-        a->lea(toGp, x86::qword_ptr(x86::rax, offsetof(Node, val)));*/
-        a->mov(x86::rsi, x86::rdi);
+        a->mov(x86::rsi, x86::r10);
         a->mov(x86::rdi, x86::r9);
         a->mov(x86::rdx, 0);
-        a->mov(x86::rax, (uint64_t)_F_ASM_NOTGUARANTEED_SETVALUE);
-        a->call(x86::rax);
+        a->call((uint64_t)_F_ASM_NOTGUARANTEED_SETVALUE);
         a->mov(toGp, x86::rax);
         a->jmp(_end);
-        //a->bind(_f);
-        //goto endzone;
     }
     // =========================
     // FOUND
     // =========================
     a->bind(_f);
     if (!pointer) {
-        a->mov(toGp, x86::qword_ptr(x86::rdx, offsetof(Node, val)));
+        a->add(x86::r8, offsetof(Node, val));
+        a->mov(toGp, x86::qword_ptr(x86::rsi, x86::r8));
     } else {
-        a->lea(toGp, x86::qword_ptr(x86::rdx, offsetof(Node, val)));
+        a->add(x86::r8, offsetof(Node, val));
+        a->lea(toGp, x86::qword_ptr(x86::rsi, x86::r8));
     }
     //endzone:
     a->bind(_end);
@@ -1097,9 +1064,20 @@ void _ASM_crashINSTR(lua_ErrSignals signal, uint64_t symDlog = 0) {
     a->mov(x86::rdi, signal);
     a->mov(x86::rsi, symDlog);
     a->call((uint64_t)_ASMH__CRH);
+    a->leave();
+    a->ret();
 }
 
 //x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD = false);
+
+bool _areThereNextValuesToGet(std::vector<LuaLexFrame> *vct, uint64_t pos) {
+    try {
+        LuaLexFrame &thing = vct->at(pos+1);
+        return true;
+    } catch (std::out_of_range &e) {
+        return false;
+    }
+}
 
 x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Scope *aSCP, bool pointer, bool preservRegister) {
     bool gotFirst = false;
@@ -1116,7 +1094,7 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
         switch (actual->key) {
             case _L_VARNAME: {
                 if (!gotFirst) {
-                    std::pair<x86::Gp, bool> res = _ASM__searchSymbolToUse(ret, (TString*)actual->a, aSCP, pointer); //for func args pointer should be false.
+                    std::pair<x86::Gp, bool> res = _ASM__searchSymbolToUse(ret, (TString*)actual->a, aSCP, pointer && !_areThereNextValuesToGet(vct, pos)); //for func args pointer should be false.
                     if (res.second) {
                         if (res.first.id() < x86::Gp::Id::kIdR12) { // Do not overwrite
                             _ASM__movToReg(act, res.first);
@@ -1164,9 +1142,6 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                             a->mov(act, 0);
                             a->bind(_f1);
                         } else {
-                            if (act.id() < 12) {
-                                a->mov(act, x86::qword_ptr(act));
-                            }
                             Label _f = a->new_label();
                             Label _f1 = a->new_label();
                             _ASM__cmpVarType(act, LuaTable);
@@ -1176,7 +1151,7 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                                 a->movabs(x86::r11, 0x0000FFFFFFFFFFFFULL);
                                 a->and_(act, x86::r11);
                             }
-                            _ASMH__rs_searchInTable(act, std::pair<bool, std::pair<x86::Gp, TString*>>(false, std::pair<x86::Gp, TString*>(x86::noReg, (TString*)actual->a)), act);
+                            _ASMH__rs_searchInTable(act, std::pair<bool, std::pair<x86::Gp, TString*>>(false, std::pair<x86::Gp, TString*>(x86::noReg, (TString*)actual->a)), act, true);
                             a->jmp(_f1);
                             a->bind(_f);
                             _ASM_crashINSTR(_lua_es_UnknownDataIdx);

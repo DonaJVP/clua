@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <string>
 
 void _sendToBuf(const char* a, uint64_t dataLen) {
     std::cout.write(a, dataLen);
@@ -10,9 +11,9 @@ void _sendToBuf(const char* a, uint64_t dataLen) {
 void _getBuffInput(char **to) {
     std::string buff;
     std::getline(std::cin, buff);
-    char *sUB = new char[buff.size()-1];
-    memcpy(sUB, buff.data(), buff.size()-1);
-    sUB[buff.size()-1] = '\0';
+    char *sUB = new char[buff.size()];
+    memcpy(sUB, buff.data(), buff.size());
+    sUB[buff.size()] = '\0';
     *to = sUB;
 }
 
@@ -21,6 +22,9 @@ Values _LibraryC__print(Values RDI, Values RSI, Values *Bunch) {
     if (lua_getVarType(RDI) == LuaString) {
         TString *a = (TString*)ptr;
         _sendToBuf(a->data, a->len);
+    } else {
+        std::string UA = std::to_string(RDI);
+        _sendToBuf(UA.data(), UA.length());
     }
     return RDI;
 }

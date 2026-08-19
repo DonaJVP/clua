@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <sys/mman.h>
 #include <sys/ucontext.h>
@@ -90,6 +91,26 @@ Node *_F_ASM_MAKETABLENREHASH(lua_Table *_T, uint32_t s_) {
 }
 
 #include <iostream>
+
+Values *_F_ASM_NOTGUARANTEED_SETVALUEARRAY(lua_Table *t, Values v, uint64_t config) {
+    Values *arr = t->array;
+    if ((t->used_on_amap - t->asize) <= 5) {
+        // Resize.
+        uint64_t nSize = t->asize * 2;
+        void *nM = malloc(nSize);
+        memcpy(nM, t->array, t->asize);
+    }
+    if (config) {
+        Values *space = &arr[config];
+        *space = v;
+        return space;
+    } else {
+        Values *space = &arr[t->used_on_amap];
+        *space = v;
+        t->used_on_amap++;
+        return space;
+    }
+}
 
 Values *_F_ASM_NOTGUARANTEED_SETVALUE(lua_Table *t, TString *key, Values v) {
     size_t idx = key->IDX & t->hmask;
@@ -425,9 +446,9 @@ void _ASM__checkArraySize(uint64_t tblPTR) {
         lua_Registers.at(_CPP_getRegisterFromASM(x86::r9)).cntId = _R_TABLE_POINTER;
     }
     _HELPER__runHooksFor(x86::rdi, _R_TRASHDATA);
-    a->mov(x86::rdi, x86::qword_ptr(x86::rcx, offsetof(lua_Table, asize)));
+    a->mov(x86::rdi, x86::qword_ptr(x86::r9, offsetof(lua_Table, asize)));
     _HELPER__runHooksFor(x86::rsi, _R_TRASHDATA);
-    a->mov(x86::rsi, x86::qword_ptr(x86::rcx, offsetof(lua_Table, used_on_amap))); 
+    a->mov(x86::rsi, x86::qword_ptr(x86::r9, offsetof(lua_Table, used_on_amap))); 
     _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
     // rdi = asize; rsi = used_on_amap
     Label _END = a->new_label();
@@ -547,8 +568,9 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
     Table->nodes = new Node[2048];
     
     a->movabs(x86::r9, (uint64_t)Table);
-    _HELPER__runHooksFor(x86::r9, _R_TABLE_POINTER);
-    lua_Registers.at(REG_R9).onModified = reinterpret_cast<_regCallback>(_ASM_r9_save);
+    /// Move r9
+    a->mov(x86::qword_ptr(x86::rbp, -480), x86::r9);
+    //lua_Registers.at(REG_R9).onModified = reinterpret_cast<_regCallback>(_ASM_r9_save);
     x86::Gp toRet = x86::r9;
     x86::Gp cacheRes = x86::noReg;
     uint32_t pos = 0; 
@@ -556,12 +578,14 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
     bool _insertedString = false;
     _Lua_Lex_Keys operator_ = _L_NONE;
     _Lua_Lex_Keys _lastData = _L_NONE;
-    bool _arrayMode = false;
     TString *keyword = nullptr;
+    
     while (true) {
         try {
             frm = &vct->at(pos);
         } catch (std::out_of_range &e) {
+            if (getRegisterStatus(REG_R9) != _R_TABLE_POINTER)
+                a->mov(x86::r9, x86::qword_ptr(x86::rbp, -480));
             Table->_BOOL_constTable = _constTable;
             return toRet;
         }
@@ -575,54 +599,24 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
             }
             keyword = returnCompiledString(frm->addr->getHeaderVarString());
             // Proceed to eval their data.
-            _arrayMode = false;
             cacheRes = CLUA_EvalExprNReturn(&frm->EXPR_BRKT, scope, {false, x86::noReg}, false, false, {0, _L_NONE});
-            _HELPER__runHooksFor(cacheRes, _R_CLUATYPE_UNTAGGED);
-            // Now, we wait.
-        } else if (frm->key == _L_SEPARATOR) {
-            if (_arrayMode) {
-                // [0] = <data>
-                // Let's dig into it.
-                _ASM__checkArraySize((uint64_t)Table);
-                _HELPER__runHooksFor(x86::r9, _R_TABLE_POINTER);
-                a->mov(x86::r9, x86::qword_ptr(x86::rbp, -480));
-                // Continue;
-                // Save cacheRes to the next table pos.
-                if (getRegisterStatus(_HELPER_RCONTENT__GP(cacheRes)) != _R_CLUATYPE_UNTAGGED)
-                    a->mov(cacheRes, x86::qword_ptr(x86::rbp, -464));
-                // Continue;
-                _HELPER__runHooksFor(x86::rcx, _R_TRASHDATA);
-                a->lea(x86::rcx, x86::qword_ptr(x86::r9, offsetof(lua_Table, array)));
-                a->mov(x86::rsi, x86::qword_ptr(x86::r9, offsetof(lua_Table, used_on_amap)));
-                // Save
-                a->mov(x86::qword_ptr(x86::rcx, x86::rsi), cacheRes);
-                a->inc(x86::qword_ptr(x86::r9, offsetof(lua_Table, used_on_amap)));
-            } else {
-                // <keyword> = <data>
-                // Let's use _F_ASM_NOTGUARANTEED_SETVALUE instead of coding pure asm (I could but nope.)
-                if (getRegisterStatus(REG_R9) != _R_TABLE_POINTER)
-                    a->mov(x86::r9, x86::qword_ptr(x86::rbp, -480));
-                if (getRegisterStatus(_HELPER_RCONTENT__GP(cacheRes)) != _R_CLUATYPE_UNTAGGED)
-                    a->mov(cacheRes, x86::qword_ptr(x86::rbp, -464));
-                if (keyword == nullptr) {
-                    m_LuaErrorHandler->reportError(_lua_es_UnknownErr, 0, "Internal error. TString* == nullptr when <keyword::TString*> = data statement was true.");
-                    m_LuaErrorHandler->setFatal(true);
-                    a->leave();
-                    a->ret();
-                    return x86::noReg;
-                }
-                a->mov(x86::rdi, x86::r9);
-                a->movabs(x86::rsi, (uint64_t)keyword);
-                if (x86::rdx == cacheRes)
-                    a->mov(x86::rdx, cacheRes);
-                a->call((uint64_t)_F_ASM_NOTGUARANTEED_SETVALUE);
-                _H_CPP__turnRegistersAfterCall();
-            }
+            lua_Registers.at(_CPP_getRegisterFromASM(cacheRes)).cntId = _R_CLUATYPE_TAGGED;
+            // Save.
+            a->mov(x86::rdi, x86::r9);
+            a->mov(x86::rsi, (uint64_t)keyword);
+            a->mov(x86::rdx, cacheRes);
+            a->call((uint64_t)_F_ASM_NOTGUARANTEED_SETVALUE);
+            _H_CPP__turnRegistersAfterCall();
         } else {
             // Get callings.
             cacheRes = CLUA_EvalExprNReturn(vct, scope, std::pair<bool, x86::Gp>(false, x86::noReg), false, false, std::pair<uint32_t*, _Lua_Lex_Keys>(&pos, _L_SEPARATOR));
-            _HELPER__runHooksFor(cacheRes, _R_CLUATYPE_UNTAGGED); // If running on local slots [r12 to r15] it should be untagged.
-            
+            // Save, this is a array.
+            if (getRegisterStatus(REG_R9) != _R_TABLE_POINTER)
+                a->mov(x86::r9, x86::qword_ptr(x86::rbp, -480));
+            a->mov(x86::rdi, x86::r9);
+            a->mov(x86::rsi, cacheRes);
+            a->xor_(x86::rdx, x86::rdx);
+            a->call((uint64_t)_F_ASM_NOTGUARANTEED_SETVALUEARRAY);
             pos--; // Jesus.
         }
         _lastData = frm->key;
@@ -717,7 +711,7 @@ std::pair<bool, lua_Table*> _LTABLE_HELPER__buildTable(std::vector<LuaLexFrame> 
                         }
                     }
                 } else if (value.key == _L_NOP) {
-                    return {};
+                    return {false, nullptr};
                 }
                 // Save statement.
                 _F_ASM_NOTGUARANTEED_SETVALUE(bTable, vSlot, data);

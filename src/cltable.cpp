@@ -410,6 +410,8 @@ void _HELPER__runHooksFor(Reg rId_, _R_CONTENTS id) {
     lua_Registers.at(_CPP_getRegisterFromASM(rId)).cntId = id;
 }
 
+#define getRegisterStatus(x) (lua_Registers.at(x).cntId)
+
 void _H_CPP__turnRegistersAfterCall() {
     _HELPER__runHooksFor(x86::rdi, _R_TRASHDATA);
     _HELPER__runHooksFor(x86::rsi, _R_TRASHDATA);
@@ -423,15 +425,14 @@ void _H_CPP__turnRegistersAfterCall() {
     //_HELPER__runHooksFor(x86::r14, _R_TRASHDATA);
     //_HELPER__runHooksFor(x86::r15, _R_TRASHDATA);
     _HELPER__runHooksFor(x86::r8, _R_TRASHDATA);
-    _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
+    lua_Registers.at(REG_R9).cntId = _R_TRASHDATA;
+    //_HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
     // GUH
     lua_RegistersXMM.at(xmm0).cntId = _R_TRASHDATA;
     lua_RegistersXMM.at(xmm1).cntId = _R_TRASHDATA;
     lua_RegistersXMM.at(xmm2).cntId = _R_TRASHDATA;
     lua_RegistersXMM.at(xmm3).cntId = _R_TRASHDATA;
 }
-
-#define getRegisterStatus(x) (lua_Registers.at(x).cntId)
 
 void _ASM__copyData(void *newArray, uint64_t bytes, void *oldArray) {
     
@@ -564,12 +565,14 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
     
     Table->asize = 0xFF; // 255bytes. 32slots of 8bytes
     Table->array = new Values[32];
-    Table->hsize = 0xFFFF; // 65536bytes. 8192slots each Node*
-    Table->nodes = new Node[2048];
+    Table->hsize = 0xFFF*sizeof(Node); // 65536bytes. 8192slots each Node*
+    Table->hmask = 0xFFF;
+    Table->nodes = new Node[0xFFF];
     
     a->movabs(x86::r9, (uint64_t)Table);
     /// Move r9
     a->mov(x86::qword_ptr(x86::rbp, -480), x86::r9);
+    getRegisterStatus(REG_R9) = _R_TABLE_POINTER;
     //lua_Registers.at(REG_R9).onModified = reinterpret_cast<_regCallback>(_ASM_r9_save);
     x86::Gp toRet = x86::r9;
     x86::Gp cacheRes = x86::noReg;
@@ -587,6 +590,9 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
             if (getRegisterStatus(REG_R9) != _R_TABLE_POINTER)
                 a->mov(x86::r9, x86::qword_ptr(x86::rbp, -480));
             Table->_BOOL_constTable = _constTable;
+            // And...
+            //a->movabs(x86::r11, (uint64_t)0x7FF5000000000001ULL);
+            //a->and_(toRet, x86::r11);
             return toRet;
         }
         if (frm->key == _L_DECLR_PLUS_DATA) { // Get their keyword and then proccess their data.
@@ -599,12 +605,22 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
             }
             keyword = returnCompiledString(frm->addr->getHeaderVarString());
             // Proceed to eval their data.
-            cacheRes = CLUA_EvalExprNReturn(&frm->EXPR_BRKT, scope, {false, x86::noReg}, false, false, {0, _L_NONE});
-            lua_Registers.at(_CPP_getRegisterFromASM(cacheRes)).cntId = _R_CLUATYPE_TAGGED;
+            if (frm->EXPR.size() == 0) {
+                m_LuaErrorHandler->reportError(_lua_es_UnknownErr, 0, "Expression size should be 1 or more, after '=' keyword");
+                m_LuaErrorHandler->setFatal(true);
+                a->leave();
+                a->ret();
+            }
+            cacheRes = CLUA_EvalExprNReturn(&frm->EXPR.at(0), scope, {false, x86::noReg}, false, false, {0, _L_NONE});
+            //lua_Registers.at(_CPP_getRegisterFromASM(cacheRes)).cntId = _R_CLUATYPE_TAGGED;
             // Save.
-            a->mov(x86::rdi, x86::r9);
-            a->mov(x86::rsi, (uint64_t)keyword);
             a->mov(x86::rdx, cacheRes);
+            if (getRegisterStatus(REG_R9) != _R_TABLE_POINTER)
+                a->mov(x86::r11, x86::qword_ptr(x86::rbp, -480));
+            else
+                a->mov(x86::r11, x86::r9);
+            a->mov(x86::rdi, x86::r11);
+            a->mov(x86::rsi, (uint64_t)keyword);
             a->call((uint64_t)_F_ASM_NOTGUARANTEED_SETVALUE);
             _H_CPP__turnRegistersAfterCall();
         } else {

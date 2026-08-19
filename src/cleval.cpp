@@ -82,6 +82,14 @@ greg_t _CPP_getRegisterFromASM(x86::Gp reg) {
         return REG_RDI;
     } else if (reg == x86::rsi) {
         return REG_RSI;
+    } else if (reg == x86::r9) {
+        return REG_R9;
+    } else if (reg == x86::r8) {
+        return REG_R8;
+    } else if (reg == x86::r10) {
+        return REG_R10;
+    } else if (reg == x86::r11) {
+        return REG_R11;
     }
     return 0;
 }
@@ -493,7 +501,7 @@ void _ASMH__rs_searchInTable(x86::Gp tblPTR, std::pair<bool, std::pair<x86::Gp, 
     }
         
     _HELPER__runHooksFor(x86::r10, _R_CLUATYPE_UNTAGGED);
-    _HELPER__runHooksFor(x86::r9, _R_CLUATYPE_UNTAGGED);
+    lua_Registers.at(_CPP_getRegisterFromASM(x86::r9)).cntId = _R_TRASHDATA;
     
     a->and_(x86::r8, x86::qword_ptr(x86::r9, offsetof(lua_Table, hmask)));
     a->mov(x86::rsi, x86::qword_ptr(x86::r9, offsetof(lua_Table, nodes)));
@@ -616,7 +624,7 @@ void _ASM__getContentsFromMGENERAL(TString *key, x86::Gp toGp, bool modify = fal
     // r8, r9 and rsi
     // Store IDX and 'and' it with hmask
     // Simple.
-    _HELPER__runHooksFor(x86::r9, _R_TABLE_POINTER);
+    _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
     a->mov(x86::r9, (uint64_t)m_General);
     _ASMH__rs_searchInTable(x86::noReg, std::pair<bool, std::pair<x86::Gp, TString*>>(false, std::pair<x86::Gp, TString*>(x86::noReg, key)), toGp, modify);
 }
@@ -727,18 +735,9 @@ std::pair<x86::Gp, bool> _ASM__searchSymbolToUse(x86::Gp toGp, TString *sym, lua
         }
         if (!found) {
             // Notify if something is modified [or mod]
-            if (queue.size() > 0) {
-                if (queue.back().m0 > 0) {
-                    x86::Gp reg = x86::Gp::make_r64(static_cast<uint32_t>(queue.back().m0));
-                    if (reg != x86::r9 && reg != toGp && reg != x86::rdi && reg != x86::rsi && reg != x86::rdx && reg != x86::rcx && reg != x86::rax && reg != x86::r8 && reg != x86::r11) {
-                        goto _KFINISH;
-                    }
-                    a->mov(x86::qword_ptr(x86::rbp, -128), reg);
-                    queue.back().m4 = 1;
-                }
-            }
             _KFINISH:
             _ASM__getContentsFromMGENERAL(sym, toGp, toModify);
+            
             return {_R, q0};
         }
     }
@@ -1387,12 +1386,16 @@ x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std:
                     // Generate it via asm (online)
                     x86::Gp regist = lua_genTable__Online(&pointer->EXPR_BRKT, scope, pointer->ATTRIB, nullptr);
                     _ASM__movToReg(x86::Gp::make_r64(ret.id()), regist);
+                    if (!noTag) {
+                        a->movabs(x86::r8, (uint64_t)0x7FF5000000000000ULL);
+                        a->or_(x86::Gp::make_r64(ret.id()), x86::r8);
+                    }
                 } else {
                     // Generated in compile time.
-                    Values val = lua_makeVar(_res.second, LuaTable);
+                    Values val = noTag ? (uint64_t)_res.second : lua_makeVar(_res.second, LuaTable);
                     a->mov(x86::Gp::make_r64(ret.id()), val);
                 }
-                _CPP__setcntId(ret, _R_CLUATYPE_TAGGED);
+                _CPP__setcntId(ret, noTag ? _R_CLUATYPE_UNTAGGED : _R_CLUATYPE_TAGGED);
                 break;
             }
             case _L_NOT: {

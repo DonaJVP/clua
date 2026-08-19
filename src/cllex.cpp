@@ -240,20 +240,19 @@ std::vector<std::string> LuaLex::ParserFirstStage(std::vector<uint8_t> data) {
 					opBytes.second = byte;
 					occupied++;
 				} else {
-					// Push two keywords.
+					// First keyword pushed, second keyword saved.
+					uint8_t OPBF = opBytes.first;
+					opBytes.first = byte;
+					
 					std::string s1;
-					std::string s2;
-					s1.push_back(opBytes.first);
-					s2.push_back(byte);
-					// do
+					s1.push_back(OPBF);
 					blocks.push_back(s1);
+					
 					if (!cache.empty()) {
 						blocks.push_back(cache);
 						cache.clear();
 					}
-					blocks.push_back(s2);
-					occupied = 0;
-					opBytes.first = 0;
+					occupied = 1;
 					opBytes.second = 0;
 				}
 			}
@@ -547,6 +546,8 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 			if (v == nullptr) {
 				// A comment <Starting of a script>
 				closure.push_back(COMMENT);
+				pos++;
+				continue;
 			} else {
 				if (v->key == _L_VARNAME || v->key == _L_ON_TO_GO_END) {
 					// Strike that value.

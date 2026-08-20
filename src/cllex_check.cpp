@@ -135,6 +135,7 @@ LuaLexFrame makeSingleExprB(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
             case _L_VARNAME: {
                 LuaLexFrame r_ = makeSinglePath(keys, pos);
                 contents.push_back(r_);
+                *pos = *pos - 1;
                 break;
             }
             case _L_F_ARGS_START: {
@@ -173,9 +174,6 @@ LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
             goto _END_;
         }
         switch (cache.key) {
-            case _L_ON_TO_GO_END: {
-                break;
-            }
             case _L_VARNAME: {
                 if (!_FIRSTADDR) {
                     local = cache.local;

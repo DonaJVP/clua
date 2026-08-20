@@ -6,6 +6,7 @@
 
 void _sendToBuf(const char* a, uint64_t dataLen) {
     std::cout.write(a, dataLen);
+    std::cout.write("\n", 1);
 }
 
 void _getBuffInput(char **to) {

@@ -1078,7 +1078,7 @@ bool _areThereNextValuesToGet(std::vector<LuaLexFrame> *vct, uint64_t pos) {
     }
 }
 
-x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Scope *aSCP, bool pointer, bool preservRegister) {
+x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Scope *aSCP, bool pointer, bool preservRegister, bool shutCheck) {
     bool gotFirst = false;
     bool continuity = false;
     LuaLexFrame *actual = nullptr;
@@ -1095,7 +1095,7 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                 if (!gotFirst) {
                     std::pair<x86::Gp, bool> res = _ASM__searchSymbolToUse(ret, (TString*)actual->a, aSCP, pointer && !_areThereNextValuesToGet(vct, pos)); //for func args pointer should be false.
                     if (res.second) {
-                        if (res.first.id() < x86::Gp::Id::kIdR12) { // Do not overwrite
+                        if (res.first.id() < 12) { // Do not overwrite
                             _ASM__movToReg(act, res.first);
                             act = res.first;
                         } else {
@@ -1187,11 +1187,25 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                 a->mov(x86::qword_ptr(x86::r9), act);
                 x86::Gp ret0 = CLUA_EvalExprNReturn(&actual->EXPR_BRKT, aSCP, std::pair<bool, x86::Gp>(false, x86::noReg), false);
                 // Eval.
+                Label _f;
+                Label number__;
+                Label _f2;
+                Label _f3;
+                if (ret0.id() > 11) {
+                    // High speed variables. Only integers allowed for now.
+                    if (shutCheck)
+                        goto _VARCHECK; // Strings mode are not allowed.
+                        a->mov(x86::r8, ret0);
+                    _ASM__getFromTableIndex(1, act, 0x0, x86::r8, 0x0, act, pointer); // x86::r9 still saved if we got high speed variables.
+                    act = ret;
+                    goto _IGNVARCHECK;
+                }
+                _VARCHECK:
                 // Should be: Int/Double, string or nil
-                Label _f = a->new_label();
-                Label number__ = a->new_label();
-                Label _f2 = a->new_label();
-                Label _f3 = a->new_label();
+                _f = a->new_label();
+                number__ = a->new_label();
+                _f2 = a->new_label();
+                _f3 = a->new_label();
                 _ASM__cmpVarType(ret0, LuaString);
                 a->jne(_f);
                 // Should either.. Search?
@@ -1224,6 +1238,7 @@ x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, x86::Gp ret, lua_Sco
                 //Crash [Nil]
                 _ASM_crashINSTR(_lua_es_InvalidType);
                 a->bind(_f3);
+                _IGNVARCHECK:
                 break;
             }
         }

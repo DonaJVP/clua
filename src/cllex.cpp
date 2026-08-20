@@ -409,6 +409,7 @@ enum _parserClosureType {
 	//Block,
 	PARENTHESES,
 	STRING,
+	IF,
 	STRING2,
 	INDEX,
 	OBJCONTROLNAME,
@@ -477,6 +478,7 @@ bool shouldntSaveKey(_Lua_Lex_Keys k) {
 	switch (k) {
 		case _L_STRING_CTRL: {return true;}
 		case _L_UNKNOWN: {return true;}
+		case _L_IF: {return true;}
 		case _L_OBJECTCODENAME: {return true;}
 		case _L_BlockStart: {return true;}
 		case _L_SEPARATOR: {return true;}
@@ -646,10 +648,19 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 			}
 			// Update closures and many more.
 			switch (k) {
+				case _L_IF: {
+					pushNewLLF(vct, k);
+					pushNewLLF(vct, _L_F_ARGS_START);
+					closure.push_back(IF);
+					break;
+				}
 				case _L_BlockStart: {
 					if (getLatestClosure(closure) == FPARENTHESES) {
 						pushNewLLF(vct, _L_F_ARGS_END);
 						pushNewLLF(vct, k);
+						closure.pop_back();
+					} else if (getLatestClosure(closure) == IF) {
+						pushNewLLF(vct, _L_F_ARGS_END);
 						closure.pop_back();
 					} else {
 						pushNewLLF(vct, k);

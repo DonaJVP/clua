@@ -1485,7 +1485,7 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
                 qlog0._log2(" :: ");
                 qlog0._log2(std::to_string(sym->cacheReg).c_str());
                 qlog0._log2("\n");
-                sym->cacheReg = 0;
+                //sym->cacheReg = 0;
             }
             _st0 = 0;
             if (slot->qID == 3) { // Let's use a nonwritable
@@ -1537,7 +1537,7 @@ void updateCacheRegisters(x86::Assembler *a, lua_Scope *Scope, std::unordered_ma
             qlog0._log2(" :: ");
             qlog0._log2(std::to_string(sym->cacheReg).c_str());
             qlog0._log2("\n");
-            sym->cacheReg = 0;
+            //sym->cacheReg = 0; // But theyre never 0.
         } else {
             std::cout << "AKSDLASDKASDNANDKNWDNQI:OANODKAHFKJAS" << " = " << std::to_string(c__) << std::endl; 
         }
@@ -2315,7 +2315,6 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                             // A whole new design for objects.
                             // Get the object name.
                             std::string str = *((std::string*)cache.ptr);
-                            std::cout << "[" <<str << "]" << std::endl;
                             if (ObjectFuncIds.find(str) == ObjectFuncIds.end()) {
                                 m_LuaErrorHandler->reportError(_lua_es_UnknownErr, 0, ("Invalid object name: "+str).c_str());
                                 m_LuaErrorHandler->reportWarning(_lua_es_UnknownDataIdx, 0, "Skipping object execution.");
@@ -2327,7 +2326,6 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                                     // Seek the last key.
                                     LuaLexFrame *FRAMEBACK = cache.LLF.at(0).addr->getBack();
                                     std::string cfName = std::string(FRAMEBACK->_data.begin(), FRAMEBACK->_data.end());//cache.LLF.at(0).addr->getHeaderVarString();
-                                    std::cout << "[" << cfName << "]" << std::endl;
                                     try {
                                         ptr = _TABLE->at(cfName);
                                     } catch (std::out_of_range &e) {
@@ -2421,7 +2419,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     
     a.finalize();
     
-    std::cout << "\033[1;33mAssembly Code:\033[0m \n" << qlog0.data() << "" << std::endl;
+    std::cout << "\033[1;33mAssembly Code:\033[0m \n" << qlog0.data() << "\n\033[1;33mSize: " << code.code_size() << "\033[0m" << std::endl;
     void *toalloc = nullptr;
     Error ERR = rt.add(&toalloc, &code);
     if (ERR != Error::kOk) {

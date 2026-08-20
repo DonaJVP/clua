@@ -895,7 +895,7 @@ extern void *_0_0_0_CMPTIME_ASM_scriptMem;
 extern int32_t _0_0_0_CMPTIME_ASM_localStackFrameBytes;
 
 asmjit::x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, asmjit::x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD = false, bool noTag = false, std::pair<uint32_t*, _Lua_Lex_Keys> middleCheck = {0, _L_NONE});
-asmjit::x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, asmjit::x86::Gp ret, lua_Scope *aSCP, bool pointer = false, bool preservRegister = false);
+asmjit::x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, asmjit::x86::Gp ret, lua_Scope *aSCP, bool pointer = false, bool preservRegister = false, bool shutCheck = false);
 asmjit::x86::Gp _ASM__keyInstRestoreVar(asmjit::x86::Gp toVar);
 void _F_ASM_MAKEFUNCTIONARGUMENTS(lua_Expression *Args, asmjit::x86::Assembler *a, lua_Scope *AS, bool give_stackptr, uint32_t stackptrsiz);
 void _ASM__movToReg(asmjit::x86::Gp cR, asmjit::x86::Gp b);

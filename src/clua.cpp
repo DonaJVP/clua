@@ -247,9 +247,13 @@ TString *CLUA::doString(const char *str, const size_t size) {
 
 std::vector<char*> filesToLoad;
 
+#include <fstream>
+#include <iterator>
+
 // Parse options.
 bool _main__processOptions(int count, char *args[]) {
-    if (count == 1) {
+    count--;
+    if (count == 0) {
         return false;
     }
     int countercount = 0;
@@ -267,15 +271,36 @@ bool _main__processOptions(int count, char *args[]) {
         countercount++;
         count--;
     }
+    // Load those files.
+    for (char *i: filesToLoad) {
+        std::ifstream inputFile(i);
+        std::string content((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
+        if (!inputFile.is_open()) {
+            m_LuaErrorHandler->reportError(_lua_es_unknownFile, 0, i);
+            m_LuaErrorHandler->setFatal(true);
+            return true;
+        }
+        CLUA::function f = CLUA::gen(std::vector<uint8_t>(content.begin(), content.end()));
+        if (FIFO->err) {
+            return true;
+        } else {
+            f(0, 0, nullptr);
+        }
+    }
     return true;
 }
 
 void _CALLBACK_(const std::vector<char> data) {
-    CLUA::gen(std::vector<uint8_t>(data.begin(), data.end()))(0, 0, nullptr);
+    CLUA::function f = CLUA::gen(std::vector<uint8_t>(data.begin(), data.end()));
+    if (f != nullptr) {
+        f(0, 0, nullptr);
+    } else {
+        // Do not report any error here! It already have been sent by compiler nor preprocessor
+    }
 }
 
 // The core.
-
+#include <iostream>
 int main(int argc, char* argv[]) {
     // Initialize CLua.
     lua_ErrHandler *f = new lua_ErrHandler();
@@ -287,6 +312,10 @@ int main(int argc, char* argv[]) {
         terminalBuffer->_callback = (_CL_TB_CLBK_String)_CALLBACK_;
         // Maybe... attach.
         terminalBuffer->loop();
+    }
+    if (FIFO->err) {
+        std::cout << "\033[1;31m" << "Error: " << FIFO->reason << std::endl;
+        return 1;
     }
     return 0;
 }

@@ -1,4 +1,5 @@
 #include "lua.hpp"
+#include "cllex.hpp"
 #include <cstddef>
 #include <luaconf.h>
 #include <sys/mman.h>
@@ -14,6 +15,8 @@
 #include <ostream>
 #include <sys/types.h>
 #include <algorithm>
+#include "ltable.hpp"
+#include "cljit.hpp"
 
 // This runs on duct tapes, if you remove one this wont work..
 
@@ -56,38 +59,6 @@ Values __ASM_F_ALLOCATEMORESPACEFORARRAYINTABLE(lua_Table *T, uint64_t S, Values
     free((void*)T->array);
     T->array = (Values*)MEM;
     return T->array[S];
-}
-
-Values __ASM_F_MAKEVAR(void *ptr, LuaType T) {
-    return NAN_BASE | (T << 48) | (uintptr_t)ptr;
-}
-
-LuaType __ASM_F_GETVARTYPE(Values o) {
-    return LuaType((o >> 48) & 0xF);
-}
-
-void *__ASM_F_GETPTR(Values k) {
-    return (void*)(k & PTR_MASK);
-}
-
-void __ASM_F_INDEXOR_NOT_VALID_TSTRING(TString *val) {
-    m_LuaErrorHandler->reportError(_lua_es_UnknownDataIdx, 0, std::string("Unknown variable"));
-    m_LuaErrorHandler->setFatal(true);
-}
-
-void __ASM_F_INDEXOR_NOT_VALID_NUM(uint32_t val) {
-    m_LuaErrorHandler->reportError(_lua_es_UnknownDataIdx, 0, std::string("Unknown variable"));
-    m_LuaErrorHandler->setFatal(true);
-}
-
-void __ASM_F_INDEXOR_NOT_VALID_NULL(uint32_t i) {
-    m_LuaErrorHandler->reportError(_lua_es_UnknownDataIdx, 0, std::string("Unknown variable"));
-    m_LuaErrorHandler->setFatal(true);
-}
-
-void __ASM_F_TABLE_NOT_VALID_OTHERTYPE(uint32_t i) {
-    m_LuaErrorHandler->reportError(_lua_es_UnknownDataIdx, 0, std::string("Unknown variable"));
-    m_LuaErrorHandler->setFatal(true);
 }
 
 TString *__ASM_F_STRINGMANIPULATOR_CONCAT(Values *a0, TString *b) {
@@ -950,7 +921,7 @@ void _F_ASM_CRASH(const lua_ErrSignals ERR, TString *str) {
     m_LuaErrorHandler->setFatal(true);
 }
 
-LuaType __LEX_KEY_TO_LuaType(_Lua_Lex_Keys a, uint8_t ATTR) {
+uint64_t __LEX_KEY_TO_LuaType(_Lua_Lex_Keys a, uint8_t ATTR) {
     switch (a) {
         case _L_STRING: {
             return LuaString;

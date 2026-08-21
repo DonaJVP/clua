@@ -1,6 +1,7 @@
 #include "lua.hpp"
 #include "ltable.hpp"
 #include <csignal>
+#include "cljit.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <asmjit/core.h>

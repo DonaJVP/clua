@@ -120,6 +120,7 @@ enum lua_ErrSignals:uint64_t {
 	_lua_es_UnknownErr = 17,
 	_lua_es_Illegal = 18,
 	_lua_es_oversizedSave = 19,
+	_lua_es_unknownFile = 20,
 	// Warnings
 	_lua_es_UnknownDataIdx = 6,
 	_lua_es_FutureCrashAtRuntime = 13,

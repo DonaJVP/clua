@@ -171,6 +171,7 @@ std::vector<std::string> _starter00 {
 	"Unknown error",
 	"Illegal instruction",
 	"Call to a oversized value",
+	"Unknown file to open",
 };
 
 const std::string getLineError(lua_ErrSignals sign) {

@@ -3,6 +3,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include "../ltable.hpp"
 
 void _sendToBuf(const char* a, uint64_t dataLen) {
     std::cout.write(a, dataLen);

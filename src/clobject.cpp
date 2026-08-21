@@ -1,4 +1,5 @@
 #include "lua.hpp"
+#include "ltable.hpp"
 #include <cstdint>
 #include "clobject.hpp"
 

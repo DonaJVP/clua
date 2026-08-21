@@ -6,6 +6,7 @@
 #include <string>
 #include <stdexcept>
 #include <iostream>
+#include "cllex.hpp"
 
 // This should help to optimize the variables for each scope.
 

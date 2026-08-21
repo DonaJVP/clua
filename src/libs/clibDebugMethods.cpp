@@ -1,6 +1,7 @@
 // Yeet..
 
 #include "../lua.hpp"
+#include "../ltable.hpp"
 #include <cstdint>
 #include <ctime>
 #include <string>

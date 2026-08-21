@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "cllex.hpp"
+
 static bool _is_numb(uint8_t p) {
 	switch (p) {
 		case '1': return true;
@@ -46,6 +48,10 @@ static std::pair<bool, bool> _chars_is_numb(std::string numb) {
 		}
 	}
 	return {_done, _dot};
+}
+
+LuaLex::LuaLex(Lua *vm): m_Lua(vm) {
+	m_LuaErrorHandler = vm->m_LuaErrorHandler;
 }
 
 std::vector<LuaLexFrame> LuaLex::ParserThirdStage(std::vector<LuaLexFrame> keys) {

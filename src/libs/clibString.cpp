@@ -1,6 +1,7 @@
 // String librarie.
 #include <cstdint>
 #include "../lua.hpp"
+#include "../ltable.hpp"
 #include <string>
 
 // CLua String libraries.

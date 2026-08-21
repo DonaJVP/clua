@@ -16,48 +16,17 @@
 #include <stdexcept>
 #include <memory>
 #include <iostream>
+#include "cllex.hpp"
+#include "cljit.hpp"
 
 lua_Scope::lua_Scope() {
-	std::cout << "SCOPE CONSTRUCT" << std::endl;
 }
 
-
-std::vector<std::vector<std::string>> __LINES = std::vector<std::vector<std::string>>();
 LuaErrorHandler *m_LuaErrorHandler = nullptr;
 uint32_t luaCurrentFileId = 0;
 lua_Table *m_General = nullptr;
 std::unordered_map<std::string, TString> stringTable = std::unordered_map<std::string, TString>();
 uint32_t luaSeed;
-
-const char lua_ident[] =
-  "$Lua: " LUA_RELEASE " " LUA_COPYRIGHT " $\n"
-  "$Authors: " LUA_AUTHORS " $\n"
-  "$URL: www.lua.org $\n";
-
-// NOTE: The entire script that we load "*.lua" files must be loaded and then compiled to AsmJIT for faster work.
-
-#include <string_view>
-
-/*
-*	Basic functions for VM management
-*/
-
-#include <sstream>
-std::string luaVarInfoToString(lua_VarOnMemInfo data) {
-	std::stringstream a;
-	a << std::hex << data.Addr;
-	std::string typo = "null";
-	switch (data.type) {
-		case (LuaInteger): typo="int";
-		case (LuaString): typo="string";
-		case (LuaFunction): typo="function";
-		case (LuaObject): typo="object";
-		case (LuaTable): typo="table";
-		case (LuaNil): typo="nil";
-		case (LuaBoolean): typo="boolean";
-	}
-	return std::string(data.varname + "; MemPos: " + std::string(a.str()) + "; LuaType: " + typo);
-}
 
 std::string getLuaTypeString(LuaType TYP) {
 	std::string typo = "null";
@@ -179,7 +148,6 @@ bool LuaLex::areNumber(uint8_t data) {
 }
 
 #define cstr __cache2.clear();
-#include <sstream>
 
 // Improve line errors/warnings
 std::vector<std::string> _starter00 {
@@ -202,6 +170,7 @@ std::vector<std::string> _starter00 {
 	"Not a string",
 	"Unknown error",
 	"Illegal instruction",
+	"Call to a oversized value",
 };
 
 const std::string getLineError(lua_ErrSignals sign) {
@@ -298,14 +267,14 @@ void LuaErrorHandler::reportWarning(const lua_ErrSignals signal, const size_t fu
 	}
 }
 
-#ifndef DO_MAIN_FUNC
+
 
 #include <random>
 #include <fstream>
 #include <iterator>
 #include "clibInit.hpp"
 #include "clobject.hpp"
-
+/*
 int main(int argc, char* argv[]) {
 	// Main
 	std::cout << "C L U A" << std::endl;
@@ -449,5 +418,5 @@ int main(int argc, char* argv[]) {
 }
 
 #endif
-
+*/
 

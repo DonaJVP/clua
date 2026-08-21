@@ -8,6 +8,8 @@ set(CLUA_CORE_SRC
 	cljit.cpp
 	cloptimizer.cpp
 	clobject.cpp
+	clua.cpp
+	terminalbuff.cpp
 )
 set(CLUA_LIB_HEADERS
 	lua.hpp

@@ -1,4 +1,5 @@
 #include "lua.hpp"
+#include "cllex.hpp"
 #include <cstdint>
 #include <luaconf.h>
 #include <stdexcept>
@@ -26,7 +27,6 @@ std::string luaLexFrameKeyToString(_Lua_Lex_Keys k) {
 }
 
 #include "ltable.hpp"
-#include "llexiterator.hpp"
 
 //BEGIN lua_AddrPath
 lua_AddrPath::lua_AddrPath() {}

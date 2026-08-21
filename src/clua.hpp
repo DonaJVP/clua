@@ -19,6 +19,7 @@ struct lua_ErrHandler;
 namespace CLUA {
     // Theres no reason for the Lua class existence.
     typedef Values VALUE;
+    typedef TString STRING;
     typedef Values*(*function)(Values, Values, Values*); // rdi, rsi, rdx
     // STATE
     Lua *create(lua_ErrHandler *fifo);
@@ -53,7 +54,7 @@ namespace CLUA {
         VALUE *setDataNoCheck(lua_Table *table, size_t slot, VALUE data);
     }
     // STRING
-    TString *doString(const char *str, const size_t size = 0);
+    STRING *doString(const char *str, const size_t size = 0);
     // TYPES
     enum TYPE: uint64_t {
         LuaInteger	=	0x8,

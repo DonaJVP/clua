@@ -1,5 +1,5 @@
 # CLua
-A little library and program which compiles lua code to dynamic asm code.
+A little library and program which compiles lua code a direct machine code.
 Made specifically for functions. This can export lua functions to executable CPP/C functions.
 To: <code>casted_lua_func(RDI(uint64_t), RSI(uint64_t), uint64_t*);</code>
 from: <code>lua_func(string1, string2, bool1, bool2, integer1, integer2)</code>

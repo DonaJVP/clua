@@ -6,6 +6,7 @@
  */
 
 #include "ltable.hpp"
+#include "cllex.hpp"
 #include "lua.hpp"
 
 //BEGIN MURMUR32
@@ -14,6 +15,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include "cljit.hpp"
 #include <sys/mman.h>
 #include <sys/ucontext.h>
 

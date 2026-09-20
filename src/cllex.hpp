@@ -96,6 +96,8 @@ enum _Lua_Lex_Keys {					// Lua Default	|	Addon				| Usable code for scripting |
     _L_OBJECTCODENAME		=	83,
     _L_ON_TO_GO_OBJECT		=	84,
     _L_STRING_CTRL			=	85,
+    _L_CVT_DOUBLE           =   86,
+    _L_CVT_INTEGER          =   87,
 };
 
 class lua_AddrPath;
@@ -119,6 +121,7 @@ struct LuaLexFrame {
     uint8_t ATTRIB;
     uint8_t LuaTYPE = 0;
     uint32_t t_string_idx = 0;
+    uint64_t toTypeConvert = 0;
     lua_biOpCode *_OPCODE = nullptr;
     void *a;
     std::vector<std::vector<LuaLexFrame>> EXPR;

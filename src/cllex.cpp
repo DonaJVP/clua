@@ -383,6 +383,8 @@ static std::vector<std::string> KEYWORDS = {
 	"_CLUA@OBJECTNAME", // flag
 	":",
 	"\"",
+	"cvt2d", // Convert To Double
+	"cvt2i", // Convert To Integer
 };
 
 _Lua_Lex_Keys getKey(const std::string parameter) {
@@ -489,6 +491,8 @@ bool shouldntSaveKey(_Lua_Lex_Keys k) {
 		case _L_BlockStart: {return true;}
 		case _L_SEPARATOR: {return true;}
 		case _L_TABLE_END: {return true;}
+		case _L_CVT_DOUBLE: {return true;}
+		case _L_CVT_INTEGER: {return true;}
 		default: {return false;}
 	}
 }
@@ -536,7 +540,7 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 			pos++;
 			continue;
 		}
-		if (cache2 == _L_NEWLINE) {
+		if (k == _L_NEWLINE) {
 			// Read this new line until \n nor EOF
 			debugAttrib = getDebugLineNmakeNewOne(data, pos);
 		}
@@ -618,6 +622,8 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 					LuaLexFrame buff(_L_VARNAME);
 					buff._data = std::vector<uint8_t>(key.begin(), key.end());
 					buff.debugSymbolLine = debugAttrib;
+					buff.toTypeConvert = cache2;
+					cache2 = static_cast<_Lua_Lex_Keys>(0);
 					vct.push_back(buff);
 				}
 				pos++;
@@ -654,6 +660,14 @@ std::vector<LuaLexFrame> _ParseSecondStage(std::vector<std::string> data) {
 			}
 			// Update closures and many more.
 			switch (k) {
+				case _L_CVT_DOUBLE: {
+					cache2 = _L_CVT_DOUBLE;
+					break;
+				}
+				case _L_CVT_INTEGER: {
+					cache2 = _L_CVT_INTEGER;
+					break;
+				}
 				case _L_IF: {
 					pushNewLLF(vct, k);
 					pushNewLLF(vct, _L_F_ARGS_START);

@@ -166,6 +166,7 @@ LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
     bool _FIRSTADDR = false;
     bool declr = false;
     bool local = false;
+    bool setTTC = false;
     uint8_t atr = 0;
     while (true) {
         try {
@@ -182,6 +183,10 @@ LuaLexFrame makeSinglePath(std::vector<LuaLexFrame> *keys, uint32_t *pos) {
                     _FIRSTADDR = true;
                 }
                 declr = cache.declr;
+                if (!setTTC && cache.toTypeConvert > 0) {
+                    toRet.toTypeConvert = cache.toTypeConvert;
+                    setTTC = true;
+                }
                 data->push_back(cache);
                 break;
             }

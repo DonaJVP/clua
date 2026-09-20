@@ -1,5 +1,6 @@
 #pragma once
 #include "cllex.hpp"
+#include "clregalloc.hpp"
 #include <cstdint>
 #include <unordered_map>
 
@@ -61,12 +62,23 @@ struct _XREGISTER_ {
     void *rData0 = nullptr;
     _regCallbackXMM onModified;
 };
+
+struct GeneralRegister;
+
+// Call interface.
+struct _CLHASM__funcArgs {
+    GeneralRegister *fArg0 = nullptr;
+    GeneralRegister *fArg1 = nullptr;
+    GeneralRegister *fArg2 = nullptr;
+    uint64_t PADDING;
+};
+
 typedef std::unordered_map<greg_t, _REGISTER_> RegistersDataGP;
 typedef std::unordered_map<_LUA_XMM_REGISTERS, _XREGISTER_> RegistersDataXMM;
 extern RegistersDataGP lua_Registers;
 extern RegistersDataXMM lua_RegistersXMM;
 extern void initializeRegistersData(void *asmPtr);
-void _ASMH__rs_searchInTable(asmjit::x86::Gp tblPTR, std::pair<bool, std::pair<asmjit::x86::Gp, TString*>> key, asmjit::x86::Gp toGp, bool pointer = false);
+void _ASMH__rs_searchInTable(const std::string &kT_ST, std::pair<bool, std::pair<asmjit::x86::Gp, TString*>> key, const std::string &toGp, bool pointer = false);
 void _HELPER__runHooksFor(asmjit::Reg rId_, _R_CONTENTS id);
 inline void __ASM_callback_nothing_(asmjit::x86::Assembler *a, _REGISTER_ *reg) {}
 inline void __ASM_callback_nothingX_(asmjit::x86::Assembler *a, _XREGISTER_ *reg) {}
@@ -74,13 +86,16 @@ asmjit::x86::Gp _ASMH__parseVarCacheRef(uint8_t r);
 lua_localSymbol *searchSavedGeneralVars(const std::string id);
 _LUA_XMM_REGISTERS _CPP_getXMMfromASM(asmjit::Reg rId);
 
-asmjit::x86::Gp CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, asmjit::x86::Gp> saveSpecificallyTo, bool getPointerInsteadofRawD = false, bool noTag = false, std::pair<uint32_t*, _Lua_Lex_Keys> middleCheck = {0, _L_NONE});
-asmjit::x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, asmjit::x86::Gp ret, lua_Scope *aSCP, bool pointer = false, bool preservRegister = false, bool shutCheck = false);
+std::tuple<bool, asmjit::x86::Gp, const std::string> CLUA_EvalExprNReturn(std::vector<LuaLexFrame> *k, lua_Scope *scope, std::pair<bool, const std::string> saveSpecificallyTo, bool getPointerInsteadofRawD = false, bool noTag = false, std::pair<uint32_t*, _Lua_Lex_Keys> middleCheck = {0, _L_NONE});
+asmjit::x86::Gp _ASM__getPathToSelGp(std::vector<LuaLexFrame> *vct, const std::string &RN, lua_Scope *aSCP, bool pointer = false, bool preservRegister = false, bool shutCheck = false);
 asmjit::x86::Gp _ASM__keyInstRestoreVar(asmjit::x86::Gp toVar);
-void _F_ASM_MAKEFUNCTIONARGUMENTS(lua_Expression *Args, asmjit::x86::Assembler *a, lua_Scope *AS, bool give_stackptr, uint32_t stackptrsiz);
 void _ASM__movToReg(asmjit::x86::Gp cR, asmjit::x86::Gp b);
 extern asmjit::StringLogger qlog0;
 extern int32_t stackRegCounter; // Starts from -40.
 greg_t _CPP_getRegisterFromASM(asmjit::x86::Gp reg);
 void _ASM_DEBUGGER_STOP();
-void _lua_Table__initializeAssembler(asmjit::x86::Assembler *ptr);
+void _lua_Table__initializeAssembler(asmjit::x86::Builder *ptr);
+std::pair<asmjit::x86::Gp, bool> _ASM__searchSymbolToUse(const std::string &toGp, TString *sym, lua_Scope *actScope, uint32_t toModify = 0);
+_CLHASM__funcArgs *_CLHASM__buildArgs(std::vector<std::vector<LuaLexFrame>> &pCDATA, lua_Scope *scope);
+
+extern asmjit::x86::Builder *a;

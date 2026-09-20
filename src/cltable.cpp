@@ -5,12 +5,14 @@
  * With arithmetic operations, we should get to the result.
  */
 
+#include "clregalloc.hpp"
 #include "ltable.hpp"
 #include "cllex.hpp"
 #include "lua.hpp"
 
 //BEGIN MURMUR32
 
+#include <asmjit/x86/x86builder.h>
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
@@ -390,8 +392,7 @@ LuaLexFrame makeSingleTable(std::vector<LuaLexFrame> *vct, uint32_t *pos) {
 #include <asmjit/x86.h>
 #include <asmjit/host.h>
 using namespace asmjit;
-x86::Assembler *a = nullptr;
-void _lua_Table__initializeAssembler(x86::Assembler *ptr) { a = ptr; }
+void _lua_Table__initializeAssembler(x86::Builder *ptr) {}
 
 _LUA_XMM_REGISTERS _CPP_getXMMfromASM(Reg rId) {
     if (!rId.is_vec128())
@@ -400,16 +401,6 @@ _LUA_XMM_REGISTERS _CPP_getXMMfromASM(Reg rId) {
 }
 
 void _HELPER__runHooksFor(Reg rId_, _R_CONTENTS id) {
-    if (rId_.is_vec128()) {
-        lua_RegistersXMM.at(_CPP_getXMMfromASM(rId_)).onModified(a, &lua_RegistersXMM.at(_CPP_getXMMfromASM(rId_)));
-        lua_RegistersXMM.at(_CPP_getXMMfromASM(rId_)).onModified = __ASM_callback_nothingX_;
-        lua_RegistersXMM.at(_CPP_getXMMfromASM(rId_)).cntId = id;
-        return;
-    }
-    x86::Gp rId = x86::Gp::make_r64(rId_.id());
-    lua_Registers.at(_CPP_getRegisterFromASM(rId)).onModified(a, &lua_Registers.at(_CPP_getRegisterFromASM(rId)));
-    lua_Registers.at(_CPP_getRegisterFromASM(rId)).onModified = __ASM_callback_nothing_;
-    lua_Registers.at(_CPP_getRegisterFromASM(rId)).cntId = id;
 }
 
 #define getRegisterStatus(x) (lua_Registers.at(x).cntId)
@@ -441,67 +432,7 @@ void _ASM__copyData(void *newArray, uint64_t bytes, void *oldArray) {
 }
 
 // first arg = table pointer
-void _ASM__checkArraySize(uint64_t tblPTR) {
-    if (lua_Registers.at(_CPP_getRegisterFromASM(x86::r9)).cntId != _R_TABLE_POINTER) {
-        lua_Registers.at(_CPP_getRegisterFromASM(x86::r9)).onModified(a, &lua_Registers.at(_CPP_getRegisterFromASM(x86::r9)));
-        lua_Registers.at(_CPP_getRegisterFromASM(x86::r9)).onModified = __ASM_callback_nothing_;
-        a->movabs(x86::r9, tblPTR);
-        lua_Registers.at(_CPP_getRegisterFromASM(x86::r9)).cntId = _R_TABLE_POINTER;
-    }
-    _HELPER__runHooksFor(x86::rdi, _R_TRASHDATA);
-    a->mov(x86::rdi, x86::qword_ptr(x86::r9, offsetof(lua_Table, asize)));
-    _HELPER__runHooksFor(x86::rsi, _R_TRASHDATA);
-    a->mov(x86::rsi, x86::qword_ptr(x86::r9, offsetof(lua_Table, used_on_amap))); 
-    _HELPER__runHooksFor(x86::r9, _R_TRASHDATA);
-    // rdi = asize; rsi = used_on_amap
-    Label _END = a->new_label();
-    Label _targetOnFailure = a->new_label();
-    a->cmp(x86::rsi, x86::rdi);
-    a->jb(_END);
-    a->inc(x86::qword_ptr(x86::r9, offsetof(lua_Table, asize)));
-    //Create new mmap.
-    uint64_t *_slot0mem0 = new uint64_t(0);
-    uint64_t *_slot1mem0 = new uint64_t(0);
-    a->mov(x86::rax, _slot0mem0);
-    a->mov(x86::rsi, x86::qword_ptr(x86::r9, offsetof(lua_Table, used_on_amap)));
-    a->mov(x86::qword_ptr(x86::rax), x86::rsi);
-    // Calc a little bit.
-    a->mov(x86::rax, x86::qword_ptr(x86::r9, offsetof(lua_Table, asize)));
-    a->mov(x86::rsi, 2);
-    a->mul(x86::rsi);
-    a->mov(x86::r10, x86::rax);
-    // end calc
-    a->mov(x86::rax, _slot1mem0);
-    a->lea(x86::r9, x86::qword_ptr(x86::r9, offsetof(lua_Table, array)));
-    a->mov(x86::qword_ptr(x86::rax), x86::r9);
-    _H_CPP__turnRegistersAfterCall();
-    a->mov(x86::rax, 0x9); //mmap
-    a->xor_(x86::rdi, x86::rdi);
-    a->mov(x86::rsi, x86::r10);
-    a->mov(x86::rdx, 0x3);
-    a->mov(x86::r10, 0x22);
-    a->mov(x86::r8, -1);
-    a->xor_(x86::r9, x86::r9);
-    // syscall for mmap()
-    a->syscall();
-    a->cmp(x86::rax, 0);
-    a->je(_targetOnFailure);
-    // Move and copy.
-    a->mov(x86::rdi, x86::rax);
-    a->movabs(x86::r11, _slot0mem0);
-    a->mov(x86::rdx, x86::qword_ptr(x86::r11));
-    a->movabs(x86::r11, _slot1mem0);
-    a->mov(x86::rsi, x86::qword_ptr(x86::r11));
-    a->call((uint64_t)_ASM__copyData);
-    // Save that nnnnnnnnnn
-    a->movabs(x86::rcx, tblPTR);
-    a->lea(x86::rsi, x86::qword_ptr(x86::rcx, offsetof(lua_Table, array)));
-    a->mov(x86::qword_ptr(x86::rsi), x86::rax);
-    a->jmp(_END);
-    a->bind(_targetOnFailure);
-    // Crash handler.
-    a->bind(_END);
-}
+
 void _ASM_r9_save(x86::Assembler *a, _REGISTER_ *reg) {
     a->mov(x86::qword_ptr(x86::rbp, -480), x86::r9);
 }
@@ -546,6 +477,14 @@ greg_t _HELPER_RCONTENT__GP(x86::Gp REG) {
 void _ASM_reg_save(x86::Assembler *a, _REGISTER_ *reg) {
     a->mov(x86::qword_ptr(x86::rbp, -464), _HELPER_ret_RCONTENT_GP(reg));
 }
+uint64_t cCounter02 = 0;
+
+uint64_t _K=0;
+std::string UZ() {
+    _K++;
+    return std::to_string(_K);
+}
+
 // Core of table builder ASM.
 // rbx should not be touched in this context.
 // _constTable is a feature which symbols when to modify members data.
@@ -560,7 +499,7 @@ void _ASM_reg_save(x86::Assembler *a, _REGISTER_ *reg) {
  * _table.member0 = "modifiedData0"; -- No crash
  * _table.member2 = "modifiedData2"; -- Crashes (Non mutable table)
  */
-x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bool _constTable, lua_Table **tbl) {
+const std::string lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bool _constTable, lua_Table **tbl) {
     lua_Table *Table = new lua_Table(); // Save in 480.
     if (tbl != nullptr)
         *tbl = Table;
@@ -571,11 +510,12 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
     Table->hmask = 0xFFF;
     Table->nodes = new Node[0xFFF];
     
-    a->movabs(x86::r9, (uint64_t)Table);
-    /// Move r9
-    a->mov(x86::qword_ptr(x86::rbp, -480), x86::r9);
-    getRegisterStatus(REG_R9) = _R_TABLE_POINTER;
-    //lua_Registers.at(REG_R9).onModified = reinterpret_cast<_regCallback>(_ASM_r9_save);
+    std::string TNAME = "MainTable";
+    TNAME.append(std::to_string(cCounter02));
+    cCounter02++;
+    GeneralRegister *mainTable = R->createGR(TNAME);
+    
+    a->mov(S(TNAME), (uint64_t)Table);
     x86::Gp toRet = x86::r9;
     x86::Gp cacheRes = x86::noReg;
     uint32_t pos = 0; 
@@ -589,13 +529,8 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
         try {
             frm = &vct->at(pos);
         } catch (std::out_of_range &e) {
-            if (getRegisterStatus(REG_R9) != _R_TABLE_POINTER)
-                a->mov(x86::r9, x86::qword_ptr(x86::rbp, -480));
             Table->_BOOL_constTable = _constTable;
-            // And...
-            //a->movabs(x86::r11, (uint64_t)0x7FF5000000000001ULL);
-            //a->and_(toRet, x86::r11);
-            return toRet;
+            return TNAME;
         }
         if (frm->key == _L_DECLR_PLUS_DATA) { // Get their keyword and then proccess their data.
             if (frm->addr->needToResolveAddr()) {
@@ -603,7 +538,7 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
                 m_LuaErrorHandler->setFatal(true);
                 a->leave();
                 a->ret();
-                return x86::noReg;
+                return TNAME;
             }
             keyword = returnCompiledString(frm->addr->getHeaderVarString());
             // Proceed to eval their data.
@@ -613,28 +548,43 @@ x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bo
                 a->leave();
                 a->ret();
             }
-            cacheRes = CLUA_EvalExprNReturn(&frm->EXPR.at(0), scope, {false, x86::noReg}, false, false, {0, _L_NONE});
-            //lua_Registers.at(_CPP_getRegisterFromASM(cacheRes)).cntId = _R_CLUATYPE_TAGGED;
-            // Save.
-            a->mov(x86::rdx, cacheRes);
-            if (getRegisterStatus(REG_R9) != _R_TABLE_POINTER)
-                a->mov(x86::r11, x86::qword_ptr(x86::rbp, -480));
+            auto [way, regRaw, regName] = CLUA_EvalExprNReturn(&frm->EXPR.at(0), scope, {false, ""}, false, false, {0, _L_NONE});
+            std::string a0 = UZ();
+            R->createGR("rdi0"+TNAME+a0, false, x86::rdi);
+            R->createGR("rsi0"+TNAME+a0, false, x86::rsi);
+            R->createGR("rdx0"+TNAME+a0, false, x86::rdx);
+            if (way)
+                a->mov(x86::rdx, S(regName));
             else
-                a->mov(x86::r11, x86::r9);
-            a->mov(x86::rdi, x86::r11);
+                a->mov(x86::rdx, regRaw);
+            a->mov(x86::rdi, S(TNAME));
             a->mov(x86::rsi, (uint64_t)keyword);
+            R->emitCall();
             a->call((uint64_t)_F_ASM_NOTGUARANTEED_SETVALUE);
-            _H_CPP__turnRegistersAfterCall();
+            R->destroyGR("rdi0"+TNAME+a0);
+            R->destroyGR("rsi0"+TNAME+a0);
+            R->destroyGR("rdx0"+TNAME+a0);
+            if (way)
+                R->destroyGR(regName);
         } else {
-            // Get callings.
-            cacheRes = CLUA_EvalExprNReturn(vct, scope, std::pair<bool, x86::Gp>(false, x86::noReg), false, false, std::pair<uint32_t*, _Lua_Lex_Keys>(&pos, _L_SEPARATOR));
-            // Save, this is a array.
-            if (getRegisterStatus(REG_R9) != _R_TABLE_POINTER)
-                a->mov(x86::r9, x86::qword_ptr(x86::rbp, -480));
-            a->mov(x86::rdi, x86::r9);
-            a->mov(x86::rsi, cacheRes);
+            std::string a0 = UZ();
+            auto [way, regRaw, regName] = CLUA_EvalExprNReturn(vct, scope, {false, ""}, false, false, {&pos, _L_SEPARATOR});
+            R->createGR("rdi0"+TNAME+a0, false, x86::rdi);
+            R->createGR("rsi0"+TNAME+a0, false, x86::rsi);
+            R->createGR("rdx0"+TNAME+a0, false, x86::rdx);
+            a->mov(x86::rdi, S(TNAME));
+            if (way)
+                a->mov(x86::rsi, S(regName));
+            else
+                a->mov(x86::rsi, regRaw);
             a->xor_(x86::rdx, x86::rdx);
+            R->emitCall();
             a->call((uint64_t)_F_ASM_NOTGUARANTEED_SETVALUEARRAY);
+            R->destroyGR("rdi0"+TNAME+a0);
+            R->destroyGR("rsi0"+TNAME+a0);
+            R->destroyGR("rdx0"+TNAME+a0);
+            if (way)
+                R->destroyGR(regName);
             pos--; // Jesus.
         }
         _lastData = frm->key;

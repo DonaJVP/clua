@@ -16,7 +16,7 @@ struct TString;
 LuaLexFrame makeSingleTable(std::vector<LuaLexFrame> *vct, uint32_t *pos);
 std::pair<bool, lua_Table*> _LTABLE_HELPER__buildTable(std::vector<LuaLexFrame> *vct, uint64_t argPtr0);
 bool _canBuildTable(std::vector<LuaLexFrame> *vct);
-asmjit::x86::Gp lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bool _constTable, lua_Table **tbl);
+const std::string lua_genTable__Online(std::vector<LuaLexFrame> *vct, lua_Scope *scope, bool _constTable, lua_Table **tbl);
 
 extern Values _F_ASM_NOTGUARANTEED_GETVALUE(lua_Table *t, TString *k, Values nullPtr);
 extern Node *_F_ASM_MAKETABLENREHASH(lua_Table *_T, uint32_t s_);

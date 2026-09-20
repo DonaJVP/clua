@@ -162,8 +162,8 @@ struct lua_localSymbol {
 	int64_t slot = 0;
 	uint8_t qID = 0;
 	uint8_t cacheReg = 0;
-	asmjit::x86::Gp register_ = asmjit::x86::rax;
 	std::string id = "";
+	std::string availReg = "";
 	LuaType type = LuaUnknown;
 	uint64_t rawdata = 0;
 };

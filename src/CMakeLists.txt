@@ -10,6 +10,8 @@ set(CLUA_CORE_SRC
 	clobject.cpp
 	clua.cpp
 	terminalbuff.cpp
+	clregalloc.cpp
+	clcompiledcodec.cpp
 )
 set(CLUA_LIB_HEADERS
 	lua.hpp

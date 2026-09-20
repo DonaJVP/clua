@@ -1032,42 +1032,31 @@ Reg _ASM__runOpCode(uint64_t rawOpcode, Reg op0r, Reg op1r, bool check0 = true, 
                 Label noString;
                 Label end = a->new_label();
                 
-                GeneralRegister *op_0 = R->createGR("op0");
-                GeneralRegister *op_1 = R->createGR("op1");
+                //GeneralRegister *op_0 = R->createGR("op0");
+                //GeneralRegister *op_1 = R->createGR("op1");
                 
-                _ASM__movToReg(S("op1"), op1);
-                _ASM__movToReg(S("op0"), op0);
-                //a->ud2();
-                if (check0) {
-                    noString = a->new_label();
-                    a->mov(op0, (uint64_t)0x000F000000000000ULL);
-                    a->and_(op0, S("op1"));
-                    a->mov(x86::r11, (uint64_t)L_ASM_Stri);
-                    a->cmp(x86::r11, op0);
-                    a->jne(noString);
-                }
-                
+                //_ASM__movToReg(SX("op1"), op1);
+                //_ASM__movToReg(SX("op0"), op0);
                 // Unmask
                 a->mov(x86::r11, (uint64_t)0x0000FFFFFFFFFFFFULL);
-                a->and_(S("op1"), x86::r11);
-                a->and_(S("op0"), x86::r11);
+                a->and_(op0, x86::r11);
+                a->and_(op1, x86::r11);
                 
-                a->mov(T(R->createGR("rdi", false, x86::rdi)), S("op0"));
-                a->mov(T(R->createGR("rsi", false, x86::rdi)), S("op1"));
+                a->mov(T(R->createGR("rdi", false, x86::rdi)), op0);
+                a->mov(T(R->createGR("rsi", false, x86::rsi)), op1);
                 
                 R->emitCall();
                 a->call((uint64_t)__ASM_F_STRINGMANIPULATOR_CONCAT2);
                 a->jmp(end);
                 if (check0)
                     a->bind(noString);
-                // Crash.
-                //a->ud2();
                 a->mov(x86::rax, 0);
                 a->bind(end);
                 qlog0._log2("end::concat()\n", 14);
-                R->destroyGR(op_0);
-                R->destroyGR(op_1);
-                return x86::rax;
+                //R->destroyGR(op_0);
+                //R->destroyGR(op_1);
+                a->mov(op0, x86::rax);
+                return x86::Gp::make_r64(op0r.id());
             }
             default: {
                 m_LuaErrorHandler->reportError(_lua_es_BadSyntax, 0, "Unknown resources.");
@@ -1415,7 +1404,7 @@ std::tuple<bool, x86::Gp, const std::string> CLUA_EvalExprNReturn(std::vector<Lu
         }
         std::pair<bool, uint8_t> eao = _CPP__emittedAnyOpcode(pointer->key);
         if (eao.first) {
-            _OPMODE = static_cast<_Lua_Lex_Keys>(_TYPE & pointer->key);
+            _OPMODE = static_cast<_Lua_Lex_Keys>(_TYPE | pointer->key);
             tEmittedCode = eao.second;
             pos++;
             _quotient_r=true;
@@ -1639,6 +1628,8 @@ std::tuple<bool, x86::Gp, const std::string> CLUA_EvalExprNReturn(std::vector<Lu
                     if (path.id() > 11) {
                         ret = path;
                         _use_ret_reg = true;
+                    } else {
+                        a->mov(S(RET_NAME), S("path"+RET_NAME));
                     }
                 }
                 if (path_ != nullptr)

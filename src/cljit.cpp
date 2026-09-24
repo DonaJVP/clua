@@ -1347,8 +1347,8 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
     }
     // Use freed registers.
     uint8_t _c = 0;
-    GeneralRegister *mask = R->createGR("maskForPtrs");
-    a->mov(S("maskForPtrs"), (uint64_t)PTR_MASK);
+    //GeneralRegister *mask = R->createGR("maskForPtrs");
+    //a->mov(S("maskForPtrs"), (uint64_t)PTR_MASK);
     bool _putMaskIfUsed = false;
     bool _ignoreSubRegisterOptimizations = false;
     if (freeRegisters.size() == 0)
@@ -1410,10 +1410,10 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
                 qlog0._log2(" :: ");
                 qlog0._log2(std::to_string(sym->cacheReg).c_str());
                 qlog0._log2("\n");
-                GeneralRegister *r0 = R->createGR("r0");
-                _ASM__searchSymbolToUse("r0", returnCompiledString(sym->id), Scope, true);
-                a->mov(x86::qword_ptr(S("r0")), _ASMH__parseVarCacheRef(sym->cacheReg));
-                R->destroyGR(r0);
+                GeneralRegister *r0 = R->createGR("r0"+sym->id);
+                _ASM__searchSymbolToUse("r0"+sym->id, returnCompiledString(sym->id), Scope, 2);
+                a->mov(x86::qword_ptr(SX("r0"+sym->id)), _ASMH__parseVarCacheRef(sym->cacheReg));
+                R->destroyGR("r0"+sym->id);
                 qlog0._log2(">>> END SAVE ");
                 qlog0._log2(sym->id.c_str());
                 qlog0._log2(" :: ");
@@ -1435,11 +1435,12 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
             qlog0._log2(">>> Loading ");
             qlog0._log2(slot->id.c_str());
             qlog0._log2("\n");
-            GeneralRegister *reg = R->createGR("load");
-            _ASM__searchSymbolToUse("load", returnCompiledString(sym->id), Scope, false);
-            a->and_(S("load"), S("maskForPtrs"));
-            a->mov(_ASMH__parseVarCacheRef(regId+1), S("load"));
-            R->destroyGR(reg);
+            GeneralRegister *reg = R->createGR("load"+slot->id);
+            _ASM__searchSymbolToUse("load"+slot->id, returnCompiledString(slot->id), Scope, false);
+            a->mov(x86::r11, PTR_MASK);
+            a->and_(S("load"+slot->id), x86::r11);
+            a->mov(_ASMH__parseVarCacheRef(regId+1), SX("load"+slot->id));
+            R->destroyGR("load"+slot->id, true);
             slot->cacheReg = regId+1;
             qlog0._log2(">>> Ended load ");
             qlog0._log2(slot->id.c_str());
@@ -1460,10 +1461,10 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
             qlog0._log2(" :: ");
             qlog0._log2(std::to_string(sym->cacheReg).c_str());
             qlog0._log2("\n");
-            GeneralRegister *r0 = R->createGR("r0");
-            _ASM__searchSymbolToUse("r0", returnCompiledString(sym->id), Scope, true);
-            a->mov(x86::qword_ptr(S("r0")), _ASMH__parseVarCacheRef(sym->cacheReg));
-            R->destroyGR(r0);
+            GeneralRegister *r0 = R->createGR("r0"+sym->id);
+            _ASM__searchSymbolToUse("r0"+sym->id, returnCompiledString(sym->id), Scope, 2);
+            a->mov(x86::qword_ptr(SX("r0"+sym->id)), _ASMH__parseVarCacheRef(sym->cacheReg));
+            R->destroyGR("r0"+sym->id, true);
             qlog0._log2(">>> END SAVE ");
             qlog0._log2(sym->id.c_str());
             qlog0._log2(" :: ");
@@ -1719,15 +1720,13 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
         CLRA->destroyGR("f_mem_scr");
         CLRA->destroyGR("MemoryScript0");
     } else { //All locals from script SHOULD be saved in a map.
-        a->sub(x86::rsp, 520); // Starting from byte 128 it should be arguments pass, and the starting from 256 should be return place 
-        finalAllocMem = 520;
+        a->sub(x86::rsp, 0); 
         if (s > 0) {
             fMem = mmap(nullptr, s, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
             _0_0_0_CMPTIME_ASM_scriptMem = fMem;
             _0_0_0_CMPTIME_ASM_isScript = true;
             GeneralRegister *tmp0 = CLRA->createGR("f_mem_scr");
-            a->movabs(S("f_mem_scr"), (uint64_t)fMem);
-            a->mov(x86::qword_ptr(x86::rbp, -16), S("f_mem_scr"));
+            a->mov(S("f_mem_scr"), (uint64_t)fMem);
         }
     }
     std::vector<_closure_helper> closures;
@@ -1958,7 +1957,8 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                             x86::Gp RR = x86::Gp::make_r64(_hyperValue__startpoint);
                             a->mov(S(register_1_N), RR);
                         } else if (startPointReg == "HYPERVALUE") { // Direct value
-                            a->mov(S(register_1_N), _hyperValue__startpoint);
+                            if (register_1_N != ":RR:")
+                                a->mov(S(register_1_N), _hyperValue__startpoint);
                         } else { // Custom name register
                             a->mov(x86::r11, PTR_MASK);
                             a->and_(S(startPointReg), x86::r11);
@@ -2015,6 +2015,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         }
                         a->jge(scopeBlocks.back().second);
                         a->inc(RR);
+                        sv = 2;
                     } else {
                         // Direct.
                         if (closures.back().cmpReg == ":RR:") {
@@ -2025,10 +2026,11 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         } else {
                             a->cmp(RR, S(closures.back().cmpReg));
                         }
+                        sv = 2;
                         a->jge(scopeBlocks.back().second);
                         if (closures.back().stepReg == ":RR:") {
                             a->add(S(closures.back().mainReg), x86::Gp::make_r64(closures.back().step_));
-                            sv = 0; 
+                            sv = 2; 
                         } else if (closures.back().stepReg == "HYPERVALUE") {
                             a->mov(x86::r11, closures.back().step_);
                             a->add(S(closures.back().mainReg), x86::r11);
@@ -2062,6 +2064,10 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         lua_localSymbol *SYM = acquireVariableFromExtensionsPtr(closures.back()._vName, ActualScope);
                         SYM->availReg = "";
                     }
+                } else if (sv == 2) {
+                    R->destroyGR(closures.back().mainReg);
+                    R->destroyGR(closures.back().stepReg);
+                    R->destroyGR(closures.back().cmpReg);
                 }
                 closures.pop_back();
                 scopeBlocks.pop_back();

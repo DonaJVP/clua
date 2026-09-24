@@ -10,6 +10,7 @@
 #include "clibInit.hpp"
 #include "clobject.hpp"
 #include "cllex.hpp"
+#include "clerrhandler.hpp"
 
 LuaLex *LEXER = nullptr;
 lua_ErrHandler *FIFO = nullptr;
@@ -302,6 +303,8 @@ void _CALLBACK_(const std::vector<char> data) {
 // The core.
 #include <iostream>
 int main(int argc, char* argv[]) {
+    // Error handler
+    setCrashHandler();
     // Initialize CLua.
     lua_ErrHandler *f = new lua_ErrHandler();
     Lua *m_Lua = CLUA::create(f);

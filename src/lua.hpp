@@ -121,6 +121,8 @@ enum lua_ErrSignals:uint64_t {
 	_lua_es_Illegal = 18,
 	_lua_es_oversizedSave = 19,
 	_lua_es_unknownFile = 20,
+	_lua_es_segmentationfault = 21,
+	_lua_es_illegalinstruction = 22,
 	// Warnings
 	_lua_es_UnknownDataIdx = 6,
 	_lua_es_FutureCrashAtRuntime = 13,
@@ -139,6 +141,7 @@ public:
 	void reportError(const lua_ErrSignals signal, const size_t funcid = 9898986555, std::string reason = ""); // If not a function, only throw an reason with a ErrSignal.
 	void reportWarning(const lua_ErrSignals signal, const size_t funcid = 9898986555, std::string reason = "");
 	void setFatal(bool val) { m_pipe->mtx.lock(); m_pipe->fatal=true; m_pipe->mtx.unlock(); }
+	lua_ErrHandler *getPipe() { return m_pipe; }
 private:
 	lua_ErrHandler *m_pipe = nullptr;
 };

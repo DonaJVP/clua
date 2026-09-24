@@ -1571,10 +1571,15 @@ std::vector<LuaLexFrame> analizeNupdateConstantsNvars(std::vector<LuaLexFrame> *
                     if (!_1_Func) {
                         LuaLexFrame _DECLR(_L_DECLR_PLUS_DATA);
                         _DECLR.addr = _1_cache_0.addr;
-                        _DECLR.local = false;
+                        _DECLR.local = _1_Lcal || _1_cache_0.local;
                         _DECLR.EXPR = computeExpression(AF.EXPR, nowScope);
                         
                         // SHOULD ROUND DATA.
+                        _1_Func = false;
+                        _1_Path = false;
+                        _1_Lcal = false;
+                        _1_Decl = false;
+                        _1_Aadr = false;
                         
                         toFocus->push_back(_DECLR);
                     } else {

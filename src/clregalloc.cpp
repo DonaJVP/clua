@@ -33,6 +33,8 @@ CL_RegisterAllocator::CL_RegisterAllocator(void *asm_): m_asm(asm_) {
     for (x86::Gp &GP: _regs) {
         GeneralRegister *reg = new GeneralRegister();
         reg->GR_ID = GP;
+        reg->status[""] = GR_Modified;
+        reg->savedPtrs[""] = -0;
         m_registers.push_back(reg);
     }
     // end
@@ -65,10 +67,18 @@ void CL_RegisterAllocator::emitCall() {
                     }
                 }
                 reg->canOccupy = true;
+            } else {
+                if (reg->contentId == 0) {
+                    // Save register..
+                    goto _ALWAYSSAVETHISREGISTER;
+                } else {
+                    reg->contentId = 0; // Reset.
+                }
             }
             continue; // Handled by occupyArgumentsRegisters(...)
         }
         if (!reg->canOccupy) {
+            _ALWAYSSAVETHISREGISTER:
             // We're playing NOW.
             if (reg->status[reg->name] != GR_Modified) {
                 if (reg->savedPtrs.find(reg->name) == reg->savedPtrs.end()) {
@@ -94,11 +104,35 @@ GeneralRegister *CL_RegisterAllocator::searchRegByNameX(const std::string &name)
     }
 }
 
+GeneralRegister *CL_RegisterAllocator::getFreeRegister() {
+    for (GeneralRegister *reg: m_registers) {
+        if (reg->canOccupy) {
+            return reg;
+        }
+    }
+    return nullptr;
+}
+
 GeneralRegister *CL_RegisterAllocator::searchRegByName(const std::string &name, bool onlyReadIfMemory) { 
     if (m_registersStatus.find(name) != m_registersStatus.end()) {
         // Check their status.
         GeneralRegister *reg = m_registersStatus.at(name);
         if (reg->status[name] == GR_Modified) {
+            // Maybe search for another register which is not used..
+            GeneralRegister *unusedReg = getFreeRegister();
+            if (unusedReg != nullptr) {
+                // Interleave registers.
+                unusedReg->name = name;
+                unusedReg->canOccupy = false;
+                unusedReg->uses = 0;
+                unusedReg->status[name] = GR_Maintains;
+                unusedReg->contentId = 0;
+                m_registersStatus[name] = unusedReg;
+                a->mov(unusedReg->GR_ID, x86::qword_ptr(x86::rbp, reg->savedPtrs[name]));
+                // Plus..
+                unusedReg->savedPtrs[name] = reg->savedPtrs[name];
+                return unusedReg;
+            }
             // If onlyReadIfMemory is set, just return a reinterpret_cast object.
             if (onlyReadIfMemory) {
                 
@@ -126,6 +160,7 @@ GeneralRegister *CL_RegisterAllocator::searchRegByName(const std::string &name, 
                 m_LuaErrorHandler->setFatal(true);
             }
             a->mov(reg->GR_ID, x86::qword_ptr(x86::rbp, reg->savedPtrs[name]));
+            reg->name = name;
         }
         reg->uses = reg->uses + 1;
         return reg; 
@@ -198,6 +233,7 @@ GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool no
             reg_->name = name;
             reg_->status[name] = GR_Maintains;
             reg_->uses = 0;
+            reg_->contentId = 1; // Manually set register.
             m_registersStatus[name] = reg_;
             qlog0._log2(_getRegisterName(reg_->GR_ID).c_str());
             qlog0._log2("\n");
@@ -270,20 +306,29 @@ GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool no
         reg->status[name] = GR_Maintains;
         qlog0._log2(_getRegisterName(reg->GR_ID).c_str());
         qlog0._log2("\n");
+        m_registersStatus[name] = reg;
         return reg;
     } else {
         return nullptr;
     }
 }
 
-bool CL_RegisterAllocator::destroyGR(const std::string &name) {
+bool CL_RegisterAllocator::destroyGR(const std::string &name, bool purge) {
     if (m_registersStatus.find(name) == m_registersStatus.end())
         return false;
     m_registersStatus.at(name)->canOccupy = true;
+    x86::Gp Gr = m_registersStatus.at(name)->GR_ID;
+    if (purge) {
+        // Delete their references..
+        m_registersStatus.at(name)->name = "";
+        if (m_registersStatus.at(name)->status.find(name) != m_registersStatus.at(name)->status.end())
+            m_registersStatus.at(name)->status.at(name) = GR_Modified;
+        m_registersStatus.erase(name);
+    }
     qlog0._log2("<-> Destroyed ");
     qlog0._log2(name.c_str());
     qlog0._log2(" register; ");
-    qlog0._log2(_getRegisterName(m_registersStatus.at(name)->GR_ID).c_str());
+    qlog0._log2(_getRegisterName(Gr).c_str());
     qlog0._log2("\n");
     return true;
 }
@@ -407,6 +452,10 @@ x86::Gp T(GeneralRegister *gp) {
 x86::Gp SX(const std::string &name) {
     GeneralRegister *reg = R->searchRegByNameX(name);
     reg->uses = reg->uses + 1;
+    reg->status[reg->name] = GR_Modified;
+    reg->status[name] = GR_Maintains;
+    reg->name = name;
+    reg->canOccupy = false;
     return reg->GR_ID;
 }
 

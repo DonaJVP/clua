@@ -191,6 +191,11 @@ void LuaErrorHandler::reportError(const lua_ErrSignals signal, const size_t func
 	
 	std::string ErrString = "[ERROR] ";
 	
+	if (m_pipe->reason != "") {
+		ErrString = m_pipe->reason;
+		ErrString.append("\n");
+	}
+	
 	ErrString.append(getLineError(signal));
 	ErrString.append(": ");
 	

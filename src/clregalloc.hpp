@@ -33,7 +33,7 @@ public:
     CL_RegisterAllocator(void *asm_);
     ~CL_RegisterAllocator();
     GeneralRegister *createGR(const std::string &name, bool nonExpansible = false, asmjit::x86::Gp _preferGp = asmjit::x86::noReg);
-    bool destroyGR(const std::string &name); // Does nothing, just puts it to discard table.
+    bool destroyGR(const std::string &name, bool purge = false); // Does nothing, just puts it to discard table.
     void destroyGR(GeneralRegister *gp); // Does nothing, just puts it to discard table.
     GeneralRegister *searchRegByName(const std::string &name, bool onlyReadIfMemory = false);
     GeneralRegister *searchRegByNameX(const std::string &name);
@@ -46,6 +46,7 @@ public:
     bool existsAtIndex(asmjit::x86::Gp &reg);
     void pushToKnownRegister(const std::string &name);
 private:
+    GeneralRegister *getFreeRegister();
     int32_t bytes = -40;
     GeneralRegister *getLeastUsedRegister(); // If overflows
     std::vector<GeneralRegister*> m_registers;

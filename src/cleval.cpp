@@ -635,9 +635,9 @@ void _ASMH__rs_searchInTable(const std::string &kT_ST, std::pair<bool, std::pair
         a->xor_(S("rdx00"), S("rdx00"));
         R->emitCall();
         a->call((uint64_t)_F_ASM_NOTGUARANTEED_SETVALUE);
-        R->destroyGR("rsi00");
-        R->destroyGR("rdi00");
-        R->destroyGR("rdx00");
+        R->destroyGR("rsi00", true);
+        R->destroyGR("rdi00", true);
+        R->destroyGR("rdx00", true);
         a->mov(SX(toGp), x86::rax);
         a->jmp(_end);
     }
@@ -712,23 +712,20 @@ std::pair<x86::Gp, bool> _ASM__searchSymbolToUse(const std::string &toGp, TStrin
                 }
             }
             if (!_0_0_0_CMPTIME_ASM_isScript) {
-                int32_t sK = -0;
+                int32_t sK = 0;
                 sK -= (s->slot);
                 if (!toModify)
-                    a->mov(S(toGp), x86::qword_ptr(x86::rbp, sK));
+                    a->mov(SX(toGp), x86::qword_ptr(x86::rbp, sK));
                 else
-                    a->lea(S(toGp), x86::qword_ptr(x86::rbp, sK));
+                    a->lea(SX(toGp), x86::qword_ptr(x86::rbp, sK));
             } else {
-                GeneralRegister *tmp0 = R->createGR("scriptMemoryF");
-                a->movabs(T(tmp0), (uint64_t)_0_0_0_CMPTIME_ASM_scriptMem);
                 if (!toModify)
-                    a->mov(S(toGp), x86::qword_ptr(T(tmp0), s->slot));
+                    a->mov(SX(toGp), x86::qword_ptr(S("f_mem_scr"), s->slot));
                 else
-                    a->lea(S(toGp), x86::qword_ptr(T(tmp0), s->slot));
-                R->destroyGR(tmp0);
+                    a->lea(SX(toGp), x86::qword_ptr(S("f_mem_scr"), s->slot));
             }
             if (!q0)
-                return {S(toGp), false};
+                return {SX(toGp), false};
             else
                 return {_R, q0};
         }
@@ -760,23 +757,20 @@ std::pair<x86::Gp, bool> _ASM__searchSymbolToUse(const std::string &toGp, TStrin
                             }
                         }
                         if (!_0_0_0_CMPTIME_ASM_isScript) {
-                            int32_t sK = -0;
+                            int32_t sK = 0;
                             sK -= (s->slot);
                             if (!toModify)
-                                a->mov(S(toGp), x86::qword_ptr(x86::rbp, sK));
+                                a->mov(SX(toGp), x86::qword_ptr(x86::rbp, sK));
                             else
-                                a->lea(S(toGp), x86::qword_ptr(x86::rbp, sK));
+                                a->lea(SX(toGp), x86::qword_ptr(x86::rbp, sK));
                         } else {
-                            GeneralRegister *tmp0 = R->createGR("scriptMemoryF");
-                            a->movabs(T(tmp0), (uint64_t)_0_0_0_CMPTIME_ASM_scriptMem);
                             if (!toModify)
-                                a->mov(S(toGp), x86::qword_ptr(T(tmp0), s->slot));
+                                a->mov(SX(toGp), x86::qword_ptr(S("f_mem_scr"), s->slot));
                             else
-                                a->lea(S(toGp), x86::qword_ptr(T(tmp0), s->slot));
-                            R->destroyGR(tmp0);
+                                a->lea(SX(toGp), x86::qword_ptr(S("f_mem_scr"), s->slot));
                         }
                         if (!q0)
-                            return {S(toGp), false};
+                            return {SX(toGp), false};
                         else
                             return {_R, q0};
                     }
@@ -1030,7 +1024,7 @@ Reg _ASM__runOpCode(uint64_t rawOpcode, Reg op0r, Reg op1r, bool check0 = true, 
                 // Concat requires external calling..
                 qlog0._log2("start::concat()\n", 16);
                 Label noString;
-                Label end = a->new_label();
+                //Label end = a->new_label();
                 
                 //GeneralRegister *op_0 = R->createGR("op0");
                 //GeneralRegister *op_1 = R->createGR("op1");
@@ -1047,11 +1041,13 @@ Reg _ASM__runOpCode(uint64_t rawOpcode, Reg op0r, Reg op1r, bool check0 = true, 
                 
                 R->emitCall();
                 a->call((uint64_t)__ASM_F_STRINGMANIPULATOR_CONCAT2);
-                a->jmp(end);
-                if (check0)
-                    a->bind(noString);
-                a->mov(x86::rax, 0);
-                a->bind(end);
+                R->destroyGR("rdi", true);
+                R->destroyGR("rsi", true);
+                //a->jmp(end);
+                //if (check0)
+                //    a->bind(noString);
+                //a->mov(x86::rax, 0);
+                //a->bind(end);
                 qlog0._log2("end::concat()\n", 14);
                 //R->destroyGR(op_0);
                 //R->destroyGR(op_1);
@@ -1585,14 +1581,14 @@ std::tuple<bool, x86::Gp, const std::string> CLUA_EvalExprNReturn(std::vector<Lu
                 break;
             }
             case _L_PATH: {
-                GeneralRegister *path_ = _CPP__areThereOpInstruction(k, pos+1).first ? R->createGR("path"+RET_NAME) : nullptr;
+                GeneralRegister *path_ = _CPP__areThereOpInstruction(k, pos+1).first ? (R->createGR("path"+RET_NAME)) : (_CPP__areThereOpInstruction(k, pos-1).first ? (R->createGR("path"+RET_NAME)) : nullptr);
                 if (_OPMODE != 0) {
                     // Maybe save ret?..
                     if (_savedToXMMreg) {
                         a->movq(S(RET_NAME), x86::xmm0);
                     }
                 }
-                x86::Gp path = _ASM__getPathToSelGp(pointer->addr->getData(), _CPP__areThereOpInstruction(k, pos+1).first ? ("path"+RET_NAME) : RET_NAME, scope, (!_CPP__existsMoreOnWay(k, pos) && getPointerInsteadofRawD), true);
+                x86::Gp path = _ASM__getPathToSelGp(pointer->addr->getData(), path_ != nullptr ? ("path"+RET_NAME) : RET_NAME, scope, (!_CPP__existsMoreOnWay(k, pos) && getPointerInsteadofRawD), true);
                 
                 // Convert the given value if cvt2* are present.
                 bool _CVT = false;
@@ -1612,9 +1608,10 @@ std::tuple<bool, x86::Gp, const std::string> CLUA_EvalExprNReturn(std::vector<Lu
                     // path can already be interpreted as integer.
                 }
                 if (_OPMODE != 0) {
-                    if (pointer->toTypeConvert == 0) 
-                        _ASM__runOpCode(_OPMODE, S(RET_NAME), S("path"+RET_NAME), false, false);
-                    else if (_K == _L_CVT_DOUBLE) {
+                    if (pointer->toTypeConvert == 0) {
+                        Reg X = _ASM__runOpCode(_OPMODE, S(RET_NAME), S("path"+RET_NAME), false, false);
+                        a->mov(SX(RET_NAME), x86::Gp::make_r64(X.id()));
+                    }   else if (_K == _L_CVT_DOUBLE) {
                         // restore xmm0
                         a->movq(x86::xmm0, S(RET_NAME));
                         _ASM__runOpCode(_OPMODE, x86::xmm0, x86::xmm1, false, false);
@@ -1629,11 +1626,12 @@ std::tuple<bool, x86::Gp, const std::string> CLUA_EvalExprNReturn(std::vector<Lu
                         ret = path;
                         _use_ret_reg = true;
                     } else {
-                        a->mov(S(RET_NAME), S("path"+RET_NAME));
+                        if (path_ != nullptr)
+                            a->mov(SX(RET_NAME), S("path"+RET_NAME));
                     }
                 }
                 if (path_ != nullptr)
-                    R->destroyGR("path"+RET_NAME);
+                    R->destroyGR("path"+RET_NAME, true);
                 _OPMODE = static_cast<_Lua_Lex_Keys>(0);
                 break;
             }
@@ -1645,15 +1643,15 @@ std::tuple<bool, x86::Gp, const std::string> CLUA_EvalExprNReturn(std::vector<Lu
                     a->mov(S(RET_NAME), (uint64_t)lua_makeVar(pointer->a, LuaString));
                 } else {
                     GeneralRegister *GP0 = R->createGR("STR00"+RET_NAME);
-                    a->mov(S("STR00"+RET_NAME), (uint64_t)lua_makeVar(pointer->a, LuaString));
-                    _ASM__runOpCode(_OPMODE, S(RET_NAME), S("STR00"+RET_NAME), false, false);
+                    a->mov(SX("STR00"+RET_NAME), (uint64_t)lua_makeVar(pointer->a, LuaString));
+                    Reg X =_ASM__runOpCode(_OPMODE, S(RET_NAME), S("STR00"+RET_NAME), false, false);
+                    a->mov(SX(RET_NAME), x86::Gp::make_r64(X.id()));
                     R->destroyGR("STR00"+RET_NAME);
                     _OPMODE = static_cast<_Lua_Lex_Keys>(0);
                 }
                 if (_notOpCode) {
                     a->not_(S(RET_NAME));
                 }
-                _CPP__setcntId(ret, _R_CLUATYPE_TAGGED);
                 break;
             }
             case _L_TRUE: {

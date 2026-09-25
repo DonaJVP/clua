@@ -385,6 +385,7 @@ static std::vector<std::string> KEYWORDS = {
 	"\"",
 	"cvt2d", // Convert To Double
 	"cvt2i", // Convert To Integer
+	"nop",
 };
 
 _Lua_Lex_Keys getKey(const std::string parameter) {

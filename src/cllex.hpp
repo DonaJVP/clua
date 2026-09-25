@@ -74,7 +74,7 @@ enum _Lua_Lex_Keys {					// Lua Default	|	Addon				| Usable code for scripting |
     _L_MORETHAN				=	62,
     _L_MINUSTHAN			=	63,
     _L_NONE					=	64,
-    _L_NOP					=	65,
+    _L2_0  					=	65,
     _L_START				=	66,
     _L_ON_TO_GO_END			=	67,
     _L_FUNCTIONPOINTER		=	68,
@@ -98,6 +98,7 @@ enum _Lua_Lex_Keys {					// Lua Default	|	Addon				| Usable code for scripting |
     _L_STRING_CTRL			=	85,
     _L_CVT_DOUBLE           =   86,
     _L_CVT_INTEGER          =   87,
+    _L_NOP					=	88,
 };
 
 class lua_AddrPath;

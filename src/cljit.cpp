@@ -394,7 +394,13 @@ std::vector<lua_biOpCode> lua_B_F_OP(std::vector<LuaLexFrame> *Keys, uint32_t *p
             continue;
         }
         // Secondary
-        switch (_FRM.key) { //Determination.
+        switch (_FRM.key) {
+            case _L_NOP: {
+                lua_biOpCode nop;
+                nop.OPCODE = l_b_o_c_NOP;
+                opcodes.push_back(nop);
+                break;
+            }
             case _L_BlockEnd: {
                 if (_decL_S) {
                     // Crash
@@ -1407,7 +1413,7 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
                 lua_localSymbol *sym = Symbols->at(regId);
                 qlog0._log2(">>> Saving ");
                 qlog0._log2(sym->id.c_str());
-                qlog0._log2(" :: ");
+                qlog0._log2(" :2: ");
                 qlog0._log2(std::to_string(sym->cacheReg).c_str());
                 qlog0._log2("\n");
                 GeneralRegister *r0 = R->createGR("r0"+sym->id);
@@ -1434,6 +1440,8 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
             }
             qlog0._log2(">>> Loading ");
             qlog0._log2(slot->id.c_str());
+            qlog0._log2(" ");
+            qlog0._log2(std::to_string(slot->qID).c_str());
             qlog0._log2("\n");
             GeneralRegister *reg = R->createGR("load"+slot->id);
             _ASM__searchSymbolToUse("load"+slot->id, returnCompiledString(slot->id), Scope, false);
@@ -1458,7 +1466,7 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
             lua_localSymbol *sym = Symbols->at(c__);
             qlog0._log2(">>> Saving ");
             qlog0._log2(sym->id.c_str());
-            qlog0._log2(" :: ");
+            qlog0._log2(" :1: ");
             qlog0._log2(std::to_string(sym->cacheReg).c_str());
             qlog0._log2("\n");
             GeneralRegister *r0 = R->createGR("r0"+sym->id);
@@ -1886,6 +1894,10 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                         if (!_register1_HSV) {
                             lua_localSymbol *SYM = acquireVariableFromExtensionsPtr(varname, ActualScope);
                             SYM->availReg = register_1_N;
+                        } else {
+                            // Show that variable being on HSV
+                            //lua_localSymbol *SYM = acquireVariableFromExtensionsPtr(varname, ActualScope);
+                            //SYM->cacheReg = register_1.first.id();
                         }
                         qlog0._log2("\033[31m");
                         std::string startPointReg = "NOP"; // Number which we need to reach.
@@ -2072,8 +2084,8 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 closures.pop_back();
                 scopeBlocks.pop_back();
                 // Exit scope.
-                ActualScope = ActualScope->rSCOPE;
                 updateCacheRegisters(a, ActualScope, symbols);
+                ActualScope = ActualScope->rSCOPE;
                 qlog0._log2("\033[0m");
                 break;
             }
@@ -2146,6 +2158,10 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
             }
             case l_b_o_c_VTN: { // Maybe its like this: local var0 = hallo["there"];
                 //OBSOLETE.
+                break;
+            }
+            case l_b_o_c_NOP: {
+                a->nop();
                 break;
             }
             default: {

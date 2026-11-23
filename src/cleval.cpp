@@ -1,6 +1,7 @@
 #include "clregalloc.hpp"
 #include "lua.hpp"
 #include "ltable.hpp"
+#include <asmjit/core/inst.h>
 #include <asmjit/x86/x86operand.h>
 #include "cljit.hpp"
 #include <cstddef>
@@ -329,26 +330,7 @@ void _ASM__keyInstSaveVarOnEnv(x86::Gp varToSave) {
 }
 
 x86::Gp _ASMH__parseVarCacheRef(uint8_t r) {
-    x86::Gp toReg = x86::noReg;
-    switch (r) {
-        case 1: {
-            toReg = x86::r12;
-            break;
-        }
-        case 2: {
-            toReg = x86::r13;
-            break;
-        }
-        case 3: {
-            toReg = x86::r14;
-            break;
-        }
-        case 4: {
-            toReg = x86::r15;
-            break;
-        }
-    }
-    return toReg;
+    return x86::Gp::make_r64(r);
 }
 
 static Node *alloc_node() {
@@ -685,106 +667,14 @@ void _ASM__getContentsFromMGENERAL(TString *key, const std::string &toGp, bool m
 // first=Register, second=High performance local register used
 std::pair<x86::Gp, bool> _ASM__searchSymbolToUse(const std::string &toGp, TString *sym, lua_Scope *actScope, uint32_t toModify) {
     std::string symSTR = std::string(sym->data, sym->len);
-    // First, search if it are saved on high speed vars (General variables)
-    lua_localSymbol *s_ = searchSavedGeneralVars(symSTR);
-    if (s_ != nullptr) {
-        if (s_->cacheReg > 0 && !toModify) {
-            return {_ASMH__parseVarCacheRef(s_->cacheReg), true};
-        }
-    }
-    bool q0 = false;
-    x86::Gp _R = S(toGp);
-    if (actScope->symbols.find(symSTR) != actScope->symbols.end()) {
-        // Get it and return to toGp
-        lua_localSymbol *s = &actScope->symbols.at(symSTR);
-        if (s->cacheReg > 0) {
-            if (toModify) {
-                q0 = true;
-                _R = _ASMH__parseVarCacheRef(s->cacheReg);
-                goto _nocacheregistry;
-            }
-            return {_ASMH__parseVarCacheRef(s->cacheReg), true};
-        } else {
-            _nocacheregistry:
-            if (toModify < 2 || s->rawdata == 1) {
-                if (s->availReg != "") {
-                    return {S(s->availReg), true};
-                }
-            }
-            if (!_0_0_0_CMPTIME_ASM_isScript) {
-                int32_t sK = 0;
-                sK -= (s->slot);
-                if (!toModify)
-                    a->mov(SX(toGp), x86::qword_ptr(x86::rbp, sK));
-                else
-                    a->lea(SX(toGp), x86::qword_ptr(x86::rbp, sK));
-            } else {
-                if (!toModify)
-                    a->mov(SX(toGp), x86::qword_ptr(S("f_mem_scr"), s->slot));
-                else
-                    a->lea(SX(toGp), x86::qword_ptr(S("f_mem_scr"), s->slot));
-            }
-            if (!q0)
-                return {SX(toGp), false};
-            else
-                return {_R, q0};
-        }
+    if (LA->existsSymbolBetweenNow(symSTR)) {
+        Operand ADR = LA->getSym(symSTR);
+        if (ADR.is_mem())
+            a->emit(toModify ? x86::Inst::kIdLea : x86::Inst::kIdMov, SX(toGp), ADR);
+        return {ADR.is_mem() ? SX(toGp) : ADR.as<x86::Gp>(), !ADR.is_mem()};
     } else {
-        // Find in the rScopes
-        // If not found in the rScopes, get it from the m_General.
-        bool found = false;
-        lua_Scope *rSCP = actScope->rSCOPE;
-        while (true) {
-            if (rSCP != nullptr) {
-                if (rSCP->symbols.find(symSTR) == rSCP->symbols.end()) {
-                    rSCP = rSCP->rSCOPE;
-                    continue;
-                } else {
-                    // Get it and return to toGp
-                    lua_localSymbol *s = &rSCP->symbols.at(symSTR);
-                    if (s->cacheReg > 0) {
-                        if (toModify) {
-                            q0 = true;
-                            _R = _ASMH__parseVarCacheRef(s->cacheReg);
-                            goto _nocacheregistryP2;
-                        }
-                        return {_ASMH__parseVarCacheRef(s->cacheReg), true};
-                    } else {
-                        _nocacheregistryP2:
-                        if (toModify < 2 || s->rawdata == 1) {
-                            if (s->availReg != "") {
-                                return {S(s->availReg), true};
-                            }
-                        }
-                        if (!_0_0_0_CMPTIME_ASM_isScript) {
-                            int32_t sK = 0;
-                            sK -= (s->slot);
-                            if (!toModify)
-                                a->mov(SX(toGp), x86::qword_ptr(x86::rbp, sK));
-                            else
-                                a->lea(SX(toGp), x86::qword_ptr(x86::rbp, sK));
-                        } else {
-                            if (!toModify)
-                                a->mov(SX(toGp), x86::qword_ptr(S("f_mem_scr"), s->slot));
-                            else
-                                a->lea(SX(toGp), x86::qword_ptr(S("f_mem_scr"), s->slot));
-                        }
-                        if (!q0)
-                            return {SX(toGp), false};
-                        else
-                            return {_R, q0};
-                    }
-                }
-            } else {
-                break;
-            }
-        }
-        if (!found) {
-            // Notify if something is modified [or mod]
-            _KFINISH:
-            _ASM__getContentsFromMGENERAL(sym, toGp, toModify);
-            return {_R, q0};
-        }
+        _ASM__getContentsFromMGENERAL(sym, toGp, toModify);
+        return {SX(toGp), false};
     }
 }
 

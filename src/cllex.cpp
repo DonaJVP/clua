@@ -392,6 +392,8 @@ _Lua_Lex_Keys getKey(const std::string parameter) {
 	uint64_t pos = 1;
 	if (parameter == "then")
 		return _L_BlockStart;
+	if (parameter == "nop")
+		return _L_NOP;
 	for (const std::string &i: KEYWORDS) {
 		if (i == parameter) {
 			return static_cast<_Lua_Lex_Keys>(pos);

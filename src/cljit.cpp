@@ -32,6 +32,7 @@ using namespace asmjit::x86;
 asmjit::x86::Gp RR = x86::noReg;
 CL_RegisterAllocator *R = nullptr;
 asmjit::x86::Builder *a = nullptr;
+CL_LocalsAllocator *LA = nullptr;
 
 JitRuntime rt;
 
@@ -1170,8 +1171,12 @@ static void _CLHASM__call(lua_biOpCode &data, lua_Scope *scope) {
                 }
                 cont0:
                 _CLHASM__funcArgs *ARGS = _CLHASM__buildArgs(data.p, scope);
-                R->emitCall();
+                std::vector<std::string> K = R->emitCall();
                 a->call(x86::rbx);
+                // Return latest occupied registers.
+                for (std::string &I: K) {
+                    S(I);
+                }
                 // Clean up used registers.
                 uint16_t addernum = 0;
                 while (ARGS->PADDING) {
@@ -1286,6 +1291,24 @@ void frontNlowerPushes(x86::Builder *a, std::vector<lua_biOpCode> *quote, bool w
     }
 }
 
+lua_localSymbol *getFreeSymToOccupy(x86::Builder *a, lua_Scope *scope) {
+    uint64_t X = 0;
+    while (X < 4) {
+        try {
+            auto i = scope->HVtoCompiler.at(X);
+            std::string name = i.first;
+            lua_localSymbol *SYM = acquireVariableFromExtensionsPtr(name, scope);
+            if (SYM && SYM->cacheReg == 0) {
+                return SYM;
+            }
+        } catch (std::out_of_range &e) {
+            return nullptr;
+        }
+        X++;
+    }
+    return nullptr;
+}
+
 // a = Compiler
 // Scope = 'Right Now' scope
 // Symbols = Actual symbols [Used variables on registers]
@@ -1293,6 +1316,7 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
     if (_upperVarsNotRequiredHighRegistersSlot) {
         return;
     }
+    
     // Update registers.
     // Iterate with the first 4 items available on the scope side.
     uint8_t _register_0 = 0;
@@ -1326,7 +1350,7 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
                 sym = Symbols->at(_register);
             } catch (std::out_of_range &e) {break;}
             if (sym != nullptr && sym->id == name) {
-                qlog0._log2(("TO_BE_HANDLED: {"+name+", ptr="+std::to_string((uint64_t)sym)+"}\n").c_str());
+                qlog0._log2(("TO_BE_HANDLED: {"+name+", ptr="+std::to_string((uint64_t)sym)+", regid: "+std::to_string(_register)+"}\n").c_str());
                 qlog0._log2(">>> Can't occupy regSlot: ");
                 qlog0._log2(std::to_string(_register+1).c_str());
                 qlog0._log2(" :: ");
@@ -1367,7 +1391,7 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
             name = _item.first;
         } catch (std::out_of_range &e) {break;}
         lua_localSymbol *slot = acquireVariableFromExtensionsPtr(name, Scope);
-        qlog0._log2(("TO_BE_USED: {"+name+", ptr="+std::to_string((uint64_t)slot)+"}\n").c_str());
+        qlog0._log2(("TO_BE_USED: {"+name+", ptr="+std::to_string((uint64_t)slot)+", regid: "+std::to_string(_c)+"}\n").c_str());
         uint8_t track = freeRegisters.size();
         uint8_t _st0 = 1;
         if (slot->cacheReg == 0) {
@@ -1411,7 +1435,7 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
                 _optRegisterAlloc[regId] = false;
                 // Couldn't resolve, so erase it gracefully.
                 lua_localSymbol *sym = Symbols->at(regId);
-                qlog0._log2(">>> Saving ");
+                qlog0._log2(">>> Saving{O} ");
                 qlog0._log2(sym->id.c_str());
                 qlog0._log2(" :2: ");
                 qlog0._log2(std::to_string(sym->cacheReg).c_str());
@@ -1425,7 +1449,7 @@ void updateCacheRegisters(x86::Builder *a, lua_Scope *Scope, std::unordered_map<
                 qlog0._log2(" :: ");
                 qlog0._log2(std::to_string(sym->cacheReg).c_str());
                 qlog0._log2("\n");
-                //sym->cacheReg = 0;
+                sym->cacheReg = 0;
             }
             _st0 = 0;
             if (slot->qID == 3) { // Let's use a nonwritable
@@ -1613,7 +1637,8 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
     std::deque<std::pair<Label, Label>> scopeBlocks;
     lua_Scope *ActualScope;
     bool _FOR = false;
-    
+    CL_LocalsAllocator *LOCALS = new CL_LocalsAllocator();
+    LA = LOCALS;
     uint32_t IF_statements;
     // Assembly [ASMJIT]
     CodeHolder code;
@@ -1733,14 +1758,14 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
             fMem = mmap(nullptr, s, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
             _0_0_0_CMPTIME_ASM_scriptMem = fMem;
             _0_0_0_CMPTIME_ASM_isScript = true;
-            GeneralRegister *tmp0 = CLRA->createGR("f_mem_scr");
+            GeneralRegister *tmp0 = CLRA->createGR("f_mem_scr", false, x86::noReg, true);
             a->mov(S("f_mem_scr"), (uint64_t)fMem);
         }
     }
     std::vector<_closure_helper> closures;
     uint_fast16_t for_cnt_;
     ActualScope = THREADRIPPER;
-    updateCacheRegisters(a, ActualScope, symbols);
+    LA->nextScope(ActualScope);
     while (true) {
         //Do/then and end parts should be blocks that when 'break' keyword used it should jump to end.
         try {
@@ -1775,7 +1800,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 ActualScope = cache.SCOPE;
                 _LK = cache.OPCODE;
                 // Update the variables cache
-                updateCacheRegisters(a, ActualScope, symbols);
+                LA->nextScope(cache.SCOPE);
                 break;
             }
             case l_b_o_c_DEC: {
@@ -1853,7 +1878,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 ActualScope = cache.SCOPE;
                 _LK = cache.OPCODE;
                 // Update the variables cache
-                updateCacheRegisters(a, ActualScope, symbols);
+                LA->nextScope(cache.SCOPE);
                 qlog0._log2("if() end\n");
                 break;
             }
@@ -1864,7 +1889,7 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 _LK = cache.OPCODE;
                 // Update the variables cache
                 qlog0._log2("mid::For__<UpdateScopeVariables::START>\n");
-                updateCacheRegisters(a, ActualScope, symbols);
+                LA->nextScope(cache.SCOPE);
                 qlog0._log2("mid::For__<UpdateScopeVariables::END>\n");
                 // Calculate which type of expr this has to offer.
                 
@@ -2084,8 +2109,8 @@ void *luaBundleFunction(std::vector<lua_biOpCode> *_CODE, lua_Scope *THREADRIPPE
                 closures.pop_back();
                 scopeBlocks.pop_back();
                 // Exit scope.
-                updateCacheRegisters(a, ActualScope, symbols);
                 ActualScope = ActualScope->rSCOPE;
+                LA->downscaleScope();
                 qlog0._log2("\033[0m");
                 break;
             }

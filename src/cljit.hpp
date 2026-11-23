@@ -99,3 +99,4 @@ std::pair<asmjit::x86::Gp, bool> _ASM__searchSymbolToUse(const std::string &toGp
 _CLHASM__funcArgs *_CLHASM__buildArgs(std::vector<std::vector<LuaLexFrame>> &pCDATA, lua_Scope *scope);
 
 extern asmjit::x86::Builder *a;
+extern CL_LocalsAllocator *LA;

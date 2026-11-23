@@ -13,7 +13,8 @@
 #include <asmjit/x86.h>
 #include <asmjit/host.h>
 using namespace asmjit;
-using namespace asmjit::x86;
+
+std::unordered_map<std::string, uint64_t> uniqueSave;
 
 CL_RegisterAllocator::CL_RegisterAllocator(void *asm_): m_asm(asm_) {
     // Create registers.
@@ -46,14 +47,17 @@ int32_t CL_RegisterAllocator::getNextQwordNupdate() {
     return bytes;
 }
 
-void CL_RegisterAllocator::emitCall() {
+std::vector<std::string> CL_RegisterAllocator::emitCall() {
     x86::Builder *a = (x86::Builder*)m_asm;
+    std::vector<std::string> K;
     for (GeneralRegister *reg: m_registers) {
         if (reg->GR_ID == x86::rdi || reg->GR_ID == x86::rsi || reg->GR_ID == x86::rdx || reg->GR_ID == x86::rax) {
             if (reg->GR_ID == x86::rax) {
                 // Deoccupy this.
                 if (!reg->canOccupy) {
                     if (reg->status[reg->name] == GR_Maintains) {
+                        if (uniqueSave[reg->name] > 1)
+                            goto _CNT3_;
                         if (reg->savedPtrs.find(reg->name) == reg->savedPtrs.end()) {
                             // Alloc new qword.
                             int32_t level = getNextQwordNupdate();
@@ -63,7 +67,11 @@ void CL_RegisterAllocator::emitCall() {
                             int32_t level = reg->savedPtrs.at(reg->name);
                             a->mov(x86::qword_ptr(x86::rbp, level), reg->GR_ID);
                         }
+                        if (uniqueSave[reg->name] == 1)
+                            uniqueSave[reg->name] = 2;
+                        _CNT3_:
                         reg->status[reg->name] = GR_Modified;
+                        K.push_back(reg->name);
                     }
                 }
                 reg->canOccupy = true;
@@ -81,6 +89,8 @@ void CL_RegisterAllocator::emitCall() {
             _ALWAYSSAVETHISREGISTER:
             // We're playing NOW.
             if (reg->status[reg->name] != GR_Modified) {
+                if (uniqueSave[reg->name] > 1)
+                    goto _CNT4_;
                 if (reg->savedPtrs.find(reg->name) == reg->savedPtrs.end()) {
                     // Alloc new qword.
                     int32_t level = getNextQwordNupdate();
@@ -90,10 +100,15 @@ void CL_RegisterAllocator::emitCall() {
                     int32_t level = reg->savedPtrs.at(reg->name);
                     a->mov(x86::qword_ptr(x86::rbp, level), reg->GR_ID);
                 }
+                if (uniqueSave[reg->name] == 1)
+                    uniqueSave[reg->name] = 2;
+                _CNT4_:
                 reg->status[reg->name] = GR_Modified;
+                K.push_back(reg->name);
             }
         }
     }
+    return K;
 }
 
 GeneralRegister *CL_RegisterAllocator::searchRegByNameX(const std::string &name) {
@@ -141,6 +156,8 @@ GeneralRegister *CL_RegisterAllocator::searchRegByName(const std::string &name, 
             // See if other valued already occupied this register so we can save theirs.
             if (reg->name != name) {
                 if (reg->status.at(reg->name) == GR_Maintains) {
+                    if (uniqueSave[reg->name] > 1)
+                        goto _CNT2_;
                     if (reg->savedPtrs.find(reg->name) == reg->savedPtrs.end()) {
                         // Alloc new qword.
                         int32_t level = getNextQwordNupdate();
@@ -150,6 +167,10 @@ GeneralRegister *CL_RegisterAllocator::searchRegByName(const std::string &name, 
                         int32_t level = reg->savedPtrs[reg->name];
                         a->mov(x86::qword_ptr(x86::rbp, level), reg->GR_ID);
                     }
+                    if (uniqueSave[reg->name] == 1)
+                        uniqueSave[reg->name] = 2;
+                    _CNT2_:
+                    __asm__("nop");
                 } else { // Destroyed register and holds other data, so..
                     
                 }
@@ -200,7 +221,7 @@ const std::string _getRegisterName(x86::Gp K) {
     return "<!><!>";
 }
 
-GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool nonExpansible, x86::Gp _preferGp) {
+GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool nonExpansible, x86::Gp _preferGp, bool singleTimeSave) {
     // Log
     qlog0._log2("<+> Registering ");
     qlog0._log2(name.c_str());
@@ -218,6 +239,8 @@ GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool no
             // It is occupied, so first we save their data and then alloc this new name.
             if (!reg_->canOccupy) {
                 reg_->status[reg_->name] = GR_Modified;
+                if (uniqueSave[reg_->name] > 1)
+                    goto _CNT0_;
                 // Save to pointer.
                 if (reg_->savedPtrs.find(reg_->name) != reg_->savedPtrs.end()) {
                     // Do not allocate new but save.
@@ -228,12 +251,17 @@ GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool no
                     reg_->savedPtrs[reg_->name] = level;
                     a->mov(x86::qword_ptr(x86::rbp, level), reg_->GR_ID);
                 }
+                if (uniqueSave[reg_->name] == 1) {
+                    uniqueSave[reg_->name] = uniqueSave[reg_->name] + 1;
+                }
             }
+            _CNT0_:
             reg_->canOccupy = false;
             reg_->name = name;
             reg_->status[name] = GR_Maintains;
             reg_->uses = 0;
             reg_->contentId = 1; // Manually set register.
+            uniqueSave[name] = singleTimeSave;
             m_registersStatus[name] = reg_;
             qlog0._log2(_getRegisterName(reg_->GR_ID).c_str());
             qlog0._log2("\n");
@@ -250,6 +278,7 @@ GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool no
             reg->canOccupy = false;
             reg->uses = 0;
             reg->status[name] = GR_Maintains;
+            uniqueSave[name] = singleTimeSave;
             m_registersStatus[name] = reg;
             qlog0._log2(_getRegisterName(reg->GR_ID).c_str());
             qlog0._log2("\n");
@@ -275,6 +304,7 @@ GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool no
                             rNew->canOccupy = false;
                             rNew->uses = 0;
                             rNew->status[name] = GR_Maintains;
+                            uniqueSave[name] = singleTimeSave;
                             m_registersStatus[name] = rNew;
                             return rNew;
                         }
@@ -290,6 +320,8 @@ GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool no
             reg->status[reg->name] = GR_Modified;
             // Save data.
             {
+                if (uniqueSave[reg->name] > 1)
+                    goto _CNT1_;
                 if (reg->savedPtrs.find(reg->name) == reg->savedPtrs.end()) {
                     int32_t level = getNextQwordNupdate();
                     reg->savedPtrs[reg->name] = level;
@@ -298,12 +330,17 @@ GeneralRegister *CL_RegisterAllocator::createGR(const std::string &name, bool no
                     int32_t level = reg->savedPtrs.at(reg->name);
                     a->mov(x86::qword_ptr(x86::rbp, level), reg->GR_ID);
                 }
+                if (uniqueSave[reg->name] == 1) {
+                    uniqueSave[reg->name] = uniqueSave[reg->name] + 1;
+                }
             }
         }
+        _CNT1_:
         reg->name = name;
         reg->canOccupy = false;
         reg->uses = 0;
         reg->status[name] = GR_Maintains;
+        uniqueSave[name] = singleTimeSave;
         qlog0._log2(_getRegisterName(reg->GR_ID).c_str());
         qlog0._log2("\n");
         m_registersStatus[name] = reg;
@@ -393,6 +430,7 @@ GeneralRegister *CL_RegisterAllocator::getRegisterRAW(x86::Gp gp) {
 
 // Disable rdi, rsi, rdx just for a moment, and then clear.
 void CL_RegisterAllocator::occupyArgumentsRegisters(GeneralRegister *gp1, GeneralRegister *gp2, GeneralRegister *gp3) {
+    //OBSOLETE
     std::vector<x86::Gp> _regs_{x86::rdi, x86::rsi, x86::rdx};
     x86::Builder *a = (x86::Builder*)m_asm;
     for (x86::Gp &gp: _regs_) {
@@ -471,4 +509,186 @@ x86::Gp S(const std::string &name, bool onlyReadIfMemory) {
 
 GeneralRegister *X(x86::Gp &reg) {
     return R->getRegisterRAW(reg);
+}
+
+void mov(Operand X, Operand Y) {
+    a->emit(x86::Inst::kIdMov, X, Y);
+}
+
+void mov(const std::string &X, Operand Y) {
+    a->emit(x86::Inst::kIdMov, SX(X), Y);
+}
+
+/// CL_LocalsAllocator
+
+CL_LocalsAllocator::CL_LocalsAllocator() {
+    for (uint32_t i = 12; i < 16; i++) {
+        m_allocSymbols[i] = nullptr;
+    }
+}
+CL_LocalsAllocator::~CL_LocalsAllocator() {}
+
+std::pair<bool, lua_localSymbol*> searchSymbolOnlyZone(lua_Scope *scp, const std::string &id) {
+    if (scp->symbols.find(id) == scp->symbols.end()) {
+        return {false,nullptr};
+    } else {
+        return {true, &scp->symbols.at(id)};
+    }
+}
+
+std::vector<uint8_t> CL_LocalsAllocator::getFreeRegisters(lua_Scope *toNew) {
+    // First get those nullptr registers (TMP)
+    std::vector<uint8_t> vct;
+    std::vector<uint8_t> vctSkipped;
+    for (auto &i: m_allocSymbols) {
+        if (i.second == nullptr) {
+            vct.push_back(i.first);
+        } else {
+            vctSkipped.push_back(i.first);
+        }
+    }
+    // Recalc it.
+    // now scope: now*
+    for (uint8_t &i: vctSkipped) {
+        // If not found in toNew, maybe erase.
+        bool r = searchSymbolOnlyZone(toNew, m_allocSymbols[i]->id).first;
+        if (!r) {
+            x86::Gp HSV = x86::Gp::make_r64(i);
+            vct.push_back(i);
+            // Restore it.
+            // Must be a local.
+            if (m_allocSymbols[i]->qID == 2) {
+                std::string K = "cacheGp::"+std::to_string(i)+"::"+m_allocSymbols[i]->id;
+                R->createGR(K);
+                // Add type
+                LuaType T = m_allocSymbols[i]->type;
+                uint64_t X = NAN_BASE | (T << 48);
+                a->mov(x86::r11, X);
+                a->or_(HSV, x86::r11);
+                // Save
+                a->emit(x86::Inst::kIdMov, x86::qword_ptr(_0_0_0_CMPTIME_ASM_isScript ? S("f_mem_scr") : x86::rbp, (int32_t)(_0_0_0_CMPTIME_ASM_isScript ? 1 : -1) * m_allocSymbols[i]->slot), HSV);
+            }
+        }
+    }
+    return vct;
+}
+
+lua_localSymbol *_HELPER__recursiveSearchForSymbol(const std::string &x, lua_Scope *s) {
+    // null check
+    if (s == nullptr)
+        return nullptr;
+    // First check
+    if (s->symbols.find(x) != s->symbols.end())
+        return &s->symbols.at(x);
+    // Second checks (recursive)
+    return _HELPER__recursiveSearchForSymbol(x, s->rSCOPE);
+}
+
+bool _HELPER__searchForSymbol(lua_Scope *toS, const std::string &X) {
+    return toS->symbols.find(X) != toS->symbols.end();
+}
+
+void CL_LocalsAllocator::nextScope(lua_Scope *scope) {
+    // Reorganize pointers and registers.
+    // Keep an eye, should not allow global variables around this place.
+    // Request next registers.
+    std::vector<uint8_t> freed = getFreeRegisters(scope);
+    // Now scope = now
+    // Register possible candidates to HSV -> vars.
+    for (uint8_t C = 0; C < 5; ++C) {
+        std::string selVar = "";
+        try {
+            selVar = scope->HVtoCompiler.at(C).first;
+        } catch (std::out_of_range &e) {
+            goto _END;
+        }
+        /// Check
+        if (_HELPER__searchForSymbol(now, selVar)) 
+            goto _END;
+        // Alloc.
+        // Get symbol
+        lua_localSymbol *sym = _HELPER__recursiveSearchForSymbol(selVar, scope);
+        if (sym == nullptr) {
+            // Are a general table symbol
+            // ...
+        } else {
+            // Get C register
+            uint8_t regN = freed.back();
+            freed.pop_back();
+            if (m_allocSymbols.at(regN) != nullptr) {
+                m_allocSymbols[regN]->cacheReg = 0;
+                m_allocSymbols.erase(regN);
+                m_allocSymbols[regN] = sym;
+            }
+            sym->cacheReg = regN;
+            /// ASM
+            a->emit(x86::Inst::kIdMov, x86::Gp::make_r64(regN), x86::qword_ptr(_0_0_0_CMPTIME_ASM_isScript ? S("f_mem_scr") : x86::rbp, (int32_t)(_0_0_0_CMPTIME_ASM_isScript ? 1 : -1) * sym->slot));
+            a->emit(x86::Inst::kIdMov, x86::r11, PTR_MASK);
+            a->emit(x86::Inst::kIdAnd, x86::Gp::make_r64(regN), x86::r11);
+        }
+    }
+    _END:
+    now = scope;
+    __asm__("nop");
+}
+
+void CL_LocalsAllocator::downscaleScope() {
+    // Get back to now->rSCOPE
+    // Delete those vars which are used ONLY in now scope and maintain those variables that rSCOPE uses
+    std::vector<uint8_t> freeRegisters = {};
+    for (auto &i: m_allocSymbols) {
+        std::string symName = i.second == nullptr ? "" : i.second->id;
+        if (i.second == nullptr) {
+            freeRegisters.push_back(i.first);
+        } else if (!_HELPER__searchForSymbol(now->rSCOPE, symName)) {
+            freeRegisters.push_back(searchSymbolOnlyZone(now->rSCOPE, symName).second->cacheReg);
+            m_allocSymbols[i.first] = nullptr;
+        }
+    }
+    // Reattach needed variables.
+    for (uint8_t C = 0; C < 5; ++C) {
+        std::string selVar = "";
+        try {
+            selVar = now->rSCOPE->HVtoCompiler.at(C).first;
+        } catch (std::out_of_range &e) {
+            goto _reached_end;
+        }
+        // Alloc those what are needed
+        lua_localSymbol *sym = _HELPER__recursiveSearchForSymbol(selVar, now->rSCOPE);
+        if (sym->cacheReg == 0) {
+            uint8_t regC = freeRegisters.back();
+            freeRegisters.pop_back();
+            //
+            m_allocSymbols[regC]->cacheReg = 0;
+            m_allocSymbols.erase(regC);
+            m_allocSymbols[regC] = sym;
+            sym->cacheReg = regC;
+        }
+    }
+    _reached_end:
+    if (now->rSCOPE != nullptr)
+        now = now->rSCOPE;
+    __asm__("nop");
+}
+
+Operand CL_LocalsAllocator::getSym(const std::string &name, bool alwaysAddress) {
+    lua_localSymbol *SYM = _HELPER__recursiveSearchForSymbol(name, now);
+    if (SYM) {
+        if (alwaysAddress) {
+            goto _getADDR;
+        }
+        if (SYM->cacheReg > 0) {
+            // Are on HSV
+            return x86::Gp::make_r64(SYM->cacheReg);
+        } else {
+            _getADDR:
+            return x86::qword_ptr(_0_0_0_CMPTIME_ASM_isScript ? S("f_mem_scr") : x86::rbp, (int32_t)(_0_0_0_CMPTIME_ASM_isScript ? 1 : -1) * SYM->slot);
+        }
+    } else {
+        return Imm(0);
+    } 
+}
+
+bool CL_LocalsAllocator::existsSymbolBetweenNow(const std::string &name) {
+    return _HELPER__recursiveSearchForSymbol(name, now) != nullptr;
 }
